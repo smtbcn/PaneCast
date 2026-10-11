@@ -25,9 +25,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private let modeControl = NSSegmentedControl(labels: ["Pencere", "TV ekranı (ayrı ekran)"],
                                                  trackingMode: .selectOne, target: nil, action: nil)
     private let tvModeNote = NSTextField(wrappingLabelWithString:
-        "Mac'te TV boyutunda bir ekran açılır; oraya taşıdığın pencereler ve sesleri TV'de oynar.\n\n"
-        + "Pencereyi \"PaneCast TV\" ekranına sürükle (tam ekran da olur). Sistem Ayarları → Masaüstü ve Dock → "
-        + "\"Ekranların ayrı Space'leri var\" açık kalmalı.")
+        "Mac'te TV boyutunda AYRI bir ekran açılır; oraya taşıdığın pencereler ve sesler TV'de oynar. "
+        + "Kendi ekranlarında ne açarsan aç, TV yayını kopmaz.\n\n"
+        + "Sistem Ayarları → Masaüstü ve Dock → \"Ekranların ayrı Space'leri var\" açık kalmalı.")
+    /// TV ekranı modunda Mac'teki ekranların gerçek dizilimi: "yeni ekran sağda mı solda mı"
+    /// kullanıcı tahmin etmesin.
+    private let screensNote = NSTextField(wrappingLabelWithString: "")
+    /// Yalnız TV ekranı modunda görünen görünümler.
+    private var tvModeViews: [NSView] = []
     /// Pencere listesi modunda görünen, TV ekranı modunda gizlenen görünümler.
     private var windowModeViews: [NSView] = []
     private var tvDisplayMode: Bool { modeControl.selectedSegment == 1 }
@@ -156,11 +161,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         content.addSubview(windowScroll)
         windowModeViews = [windowSection, search, refreshButton, windowScroll]
 
-        tvModeNote.frame = NSRect(x: 20, y: 400, width: 520, height: 120)
+        tvModeNote.frame = NSRect(x: 20, y: 400, width: 520, height: 130)
         tvModeNote.font = NSFont.systemFont(ofSize: 13)
         tvModeNote.textColor = .secondaryLabelColor
         tvModeNote.isHidden = true
         content.addSubview(tvModeNote)
+
+        screensNote.frame = NSRect(x: 20, y: 288, width: 520, height: 104)
+        screensNote.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        screensNote.textColor = .secondaryLabelColor
+        screensNote.isHidden = true
+        content.addSubview(screensNote)
+        let arrangeButton = button("Ekranları Düzenle…", x: 20, y: 252, w: 200) {
+            if let url = URL(string: "x-apple.systempreferences:com.apple.Displays-Settings.extension") {
+                NSWorkspace.shared.open(url)
+            }
+        }
+        arrangeButton.isHidden = true
+        content.addSubview(arrangeButton)
+        tvModeViews = [tvModeNote, screensNote, arrangeButton]
+        refreshScreensNote()
 
         content.addSubview(section("Hedef TV — ağdaki cihazlar · çift tıkla: PIN ile eşleştir", x: 560, y: 588, w: 320))
         configureTable(deviceTable, column: Self.devColumn, width: 300)
@@ -426,8 +446,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     @objc private func modeChanged() {
         let tv = tvDisplayMode
         windowModeViews.forEach { $0.isHidden = tv }
-        tvModeNote.isHidden = !tv
+        tvModeViews.forEach { $0.isHidden = !tv }
         windowHint.stringValue = tv ? "" : "Bir pencere seç; seçtiğin an yayına geçer."
+        refreshScreensNote()
     }
 
     /// Yayın sırasında pencere değişti: akışı kesmeden yeni pencereye geç.
@@ -671,9 +692,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         modeControl.isEnabled = !engine.isRunning
     }
 
+    /// Ekran dizilimini canlı yazar: sanal ekran açıldıkça konumu değişebiliyor.
+    private func refreshScreensNote() {
+        let screens = NSScreen.screens.map { ScreenLayout.Screen(name: $0.localizedName, frame: $0.frame) }
+        screensNote.stringValue = ScreenLayout.describe(screens, tvName: TvDisplay.name)
+    }
+
     private func render(_ s: MirrorEngine.Stats) {
         statsLabel.stringValue = String(format: "%.0f fps · %.1f Mbps · RTP %d · ses %d · kodlama %.1f ms",
                                         s.fps, s.mbps, s.packets, s.audioPackets, s.encodeP50)
+        if tvDisplayMode { refreshScreensNote() }
         setStatus(streamNotice ?? "Yayında")
     }
 

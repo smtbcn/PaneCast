@@ -36,7 +36,9 @@ final class WindowCapture: NSObject, @unchecked Sendable {
     private var stream: SCStream?
     private let windowId: UInt32
     /// Doluysa pencere yerine bu ekranın tamamı yakalanır (TV ekranı modu).
-    private let displayId: CGDirectDisplayID?
+    /// Ekranın kendisi tutulur: çevrimiçi düşünce kipi yeniden uygulanabilir.
+    private let tvDisplay: TvDisplay?
+    private var displayId: CGDirectDisplayID? { tvDisplay?.displayID }
     private var targetWidth: Int
     private var targetHeight: Int
     private var config: SCStreamConfiguration?
@@ -76,7 +78,7 @@ final class WindowCapture: NSObject, @unchecked Sendable {
          onFrame: @escaping (CVPixelBuffer, CMTime) -> Void,
          onAudio: ((CMSampleBuffer) -> Void)? = nil) {
         self.windowId = windowId
-        self.displayId = nil
+        self.tvDisplay = nil
         self.targetWidth = width
         self.targetHeight = height
         self.fps = fps
@@ -86,10 +88,10 @@ final class WindowCapture: NSObject, @unchecked Sendable {
     }
 
     /// Bir ekranın tamamını yakalar (pencere kimliği yok). Ses SCK'dan alınmaz: sahipleri tap'ten gelir.
-    init(displayId: CGDirectDisplayID, width: Int, height: Int, fps: Int,
+    init(tvDisplay: TvDisplay, width: Int, height: Int, fps: Int,
          onFrame: @escaping (CVPixelBuffer, CMTime) -> Void) {
         self.windowId = 0
-        self.displayId = displayId
+        self.tvDisplay = tvDisplay
         self.targetWidth = width
         self.targetHeight = height
         self.fps = fps
@@ -180,8 +182,8 @@ final class WindowCapture: NSObject, @unchecked Sendable {
 
     func start() async throws {
         let filter: SCContentFilter
-        if let displayId {
-            filter = SCContentFilter(display: try await TvDisplay.shareableDisplay(displayId), excludingWindows: [])
+        if let tvDisplay {
+            filter = SCContentFilter(display: try await tvDisplay.shareable(), excludingWindows: [])
         } else {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
             guard let window = content.windows.first(where: { $0.windowID == windowId }) else {

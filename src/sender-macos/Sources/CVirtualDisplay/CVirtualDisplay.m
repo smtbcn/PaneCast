@@ -1,7 +1,12 @@
 #import "CVirtualDisplay.h"
 
+@interface PCVirtualDisplay ()
+@property(readwrite, nonatomic, copy, nullable) NSString *lastState;
+@end
+
 @implementation PCVirtualDisplay {
     CGVirtualDisplay *_display;   // güçlü referans: oturum boyunca ekranı ayakta tutar
+    CGVirtualDisplaySettings *_settings;
 }
 
 + (instancetype)createWithName:(NSString *)name
@@ -33,9 +38,8 @@
     settings.hiDPI = 0;
     settings.modes = @[ [[modeClass alloc] initWithWidth:width height:height refreshRate:refreshRate] ];
 
-    // Ayarı init sırasında vermek, ekranı WindowServer'da "bağlı" olarak yukarı kaldırıyor.
-    // initWithDescriptor: + applySettings: yolu ekranı yaratıyor ama çevrimdışı bırakabiliyor;
-    // ScreenCaptureKit o durumda ekranı hiç listelemiyor (ölçüldü: displayID 19, SCK listesinde yok).
+    // Ayarları init'te vermek en temiz yol; bu macOS'ta initWithDescriptor:settings: yok
+    // (ölçüldü: instancesRespondToSelector=NO) → selector runtime'da sorulur, tek init'e düşülür.
     CGVirtualDisplay *display = nil;
     SEL initTwo = NSSelectorFromString(@"initWithDescriptor:settings:");
     if ([displayClass instancesRespondToSelector:initTwo]) {
@@ -50,23 +54,47 @@
         if (error) *error = @"sanal ekran oluşturulamadı";
         return nil;
     }
-    BOOL applied = (display.displayID != 0);
-    if (!applied) {
-        applied = [display applySettings:settings];
-    }
-    if (!applied || display.displayID == 0) {
-        if (error) *error = @"sanal ekran kipi uygulanamadı";
+    BOOL applied = [display applySettings:settings];
+    if (display.displayID == 0) {
+        if (error) *error = @"sanal ekran kipi uygulanamadı (displayID 0)";
         return nil;
     }
+    // displayID'nin dolu olması ekranın BAĞLI olduğu anlamına gelmiyor: tek applySettings YES
+    // döndürmesine rağmen ekran çevrimiçi kalmıyor (ölçüldü: isOnline=0, SCK listesi boş).
+    // İkinci uygulama anında çevrimiçi yapıyor → ekran çevrimiçi olana kadar yeniden denenir.
+    applied = [display applySettings:settings];
+    for (int tries = 0; tries < 12 && ![self isOnline:display.displayID]; tries++) {
+        applied = [display applySettings:settings];
+        usleep(20000);
+    }
+    NSLog(@"PaneCast sanal ekran: displayID=%u applySettings=%d %@",
+          (unsigned)display.displayID, applied, [self describeDisplay:display.displayID]);
 
     PCVirtualDisplay *result = [[PCVirtualDisplay alloc] init];
     result->_display = display;
-    // Ekranın çevrimiçi olması için kısa bir süre beklenir; durum loglanabilir metinle döner.
-    result.lastState = [self describeDisplay:display.displayID];
+    result->_settings = settings;
+    result.lastState = [NSString stringWithFormat:@"applySettings=%d · %@", applied,
+                        [self describeDisplay:display.displayID]];
     return result;
 }
 
 - (CGDirectDisplayID)displayID { return _display.displayID; }
+
+/// Kipi yeniden uygular ve çevrimiçi olup olmadığını döner.
+- (BOOL)reapply {
+    [_display applySettings:_settings];
+    return [PCVirtualDisplay isOnline:_display.displayID];
+}
+
+/// CGDisplayIsOnline doğrulanmış değer döndürmüyor (uygulama içinde -1 ölçüldü) →
+/// tek güvenilir okuma çevrimiçi/aktif listelerinde kimliğin aranması.
++ (BOOL)isOnline:(CGDirectDisplayID)displayID {
+    CGDirectDisplayID online[16];
+    u_int32_t count = 0;
+    CGGetOnlineDisplayList(16, online, &count);
+    for (u_int32_t i = 0; i < count; i++) if (online[i] == displayID) return YES;
+    return NO;
+}
 
 + (NSString *)describeDisplay:(CGDirectDisplayID)displayID {
     CGDirectDisplayID active[16], online[16];
@@ -81,10 +109,10 @@
     if (mode) { mw = CGDisplayModeGetPixelWidth(mode); mh = CGDisplayModeGetPixelHeight(mode); CGDisplayModeRelease(mode); }
     NSMutableString *ids = [NSMutableString stringWithString:@"aktifKimlikler="];
     for (u_int32_t i = 0; i < ac; i++) [ids appendFormat:@"%u ", active[i]];
-    return [NSString stringWithFormat:@"aktifListede=%@ cevrimiListede=%@ isActive=%d isOnline=%d isAsleep=%d isMain=%d kip=%zux%zu · %@",
-            inActive ? @"EVET" : @"HAYIR", inOnline ? @"EVET" : @"HAYIR",
-            CGDisplayIsActive(displayID), CGDisplayIsOnline(displayID),
-            CGDisplayIsAsleep(displayID), CGDisplayIsMain(displayID), mw, mh, ids];
+    // CGDisplayIsActive/IsOnline uygulama içinde doğrulanamaz değerler döndürüyor
+    // (ölçüldü: -1) → teşhiste yalnız listeler ve kip kullanılır.
+    return [NSString stringWithFormat:@"aktifListede=%@ cevrimiListede=%@ kip=%zux%zu · %@",
+            inActive ? @"EVET" : @"HAYIR", inOnline ? @"EVET" : @"HAYIR", mw, mh, ids];
 }
 
 @end

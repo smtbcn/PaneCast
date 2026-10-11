@@ -5,51 +5,64 @@ import CVirtualDisplay
 
 /// "TV ekranı" modu: Mac'te TV boyutunda sanal bir ekran açılır; oraya taşınan pencereler TV'de oynar.
 /// macOS'ta sanal ekran için herkese açık API yok → CoreGraphics'in özel sınıfları (CVirtualDisplay köprüsü).
-/// Nesne yaşadıkça ekran vardır; `release()` ya da süreç ölümüyle kaybolur.
+/// Nesne yaşadıkça ekran vardır; bırakılınca (ya da süreç ölünce) kaybolur.
+/// @MainActor: sanal ekran kurulumu ve kip yeniden uygulama WindowServer ile ana iş parçasından
+/// konuşulur; ayrıca günlük AppKit'e dokunuyor (ana iş parçası dışında çöküyor — ölçüldü).
+@MainActor
 final class TvDisplay {
     static let name = "PaneCast TV"
     static let width = 1920, height = 1080
 
-    private var virtual: PCVirtualDisplay?
+    private let virtual: PCVirtualDisplay
     let displayID: CGDirectDisplayID
+    /// Yoklama gözlemleri yayın günlüğüne yazılır; hata olursa neden tek tek okunur.
+    private let onProbe: (String) -> Void
 
-    static func create() throws -> TvDisplay {
+    static func create(onProbe: @escaping (String) -> Void = { _ in }) throws -> TvDisplay {
         var reason: NSString?
         guard let v = PCVirtualDisplay.create(withName: name, width: UInt32(width), height: UInt32(height),
                                               refreshRate: 60, error: &reason) else {
             throw CaptureError.stream("TV ekranı açılamadı: \(reason as String? ?? "bilinmeyen neden")")
         }
-        return TvDisplay(virtual: v)
+        let t = TvDisplay(virtual: v, onProbe: onProbe)
+        onProbe("sanal ekran kuruldu: \(t.setupState)")
+        return t
     }
 
-    private init(virtual: PCVirtualDisplay) {
+    private init(virtual: PCVirtualDisplay, onProbe: @escaping (String) -> Void) {
         self.virtual = virtual
         self.displayID = virtual.displayID
+        self.onProbe = onProbe
     }
 
     var pixelSize: CGSize { CGSize(width: Self.width, height: Self.height) }
-
-    /// Ekranı kaldırır (strong referansı bırakır).
-    func release() { virtual = nil }
+    /// Kurulum anındaki WindowServer durumu (applySettings/deneme/çevrimiçi/kip).
+    var setupState: String { virtual.lastState ?? "-" }
 
     /// ScreenCaptureKit yeni ekranı hemen listelemeyebilir: kısa süre yoklanır.
-    /// 40 × 150 ms = 6 sn: ekran "çevrimiçi" olana kadar SCK listesine hiç girmeyebiliyor.
-    static func shareableDisplay(_ id: CGDirectDisplayID, attempts: Int = 40) async throws -> SCDisplay {
+    /// Yoklama sırasında ekran çevrimiçi düştüyse kip yeniden uygulanır (uygulama içinde
+    /// tek seferlik bağlama CLI'daki kadar kalıcı olmuyor — ölçüldü: isOnline=0).
+    func shareable(attempts: Int = 40) async throws -> SCDisplay {
         var sonDurum = "-"
-        var ilkDurum = "-"
         var sckKimlikleri = "-"
         for deneme in 0..<attempts {
+            if deneme > 0, !virtual.reapply() {
+                onProbe("yoklama \(deneme): ekran çevrimiçi değil → kip yeniden uygulandı")
+            }
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-            if let d = content.displays.first(where: { $0.displayID == id }) { return d }
-            if deneme == 0 { ilkDurum = PCVirtualDisplay.stateOf(displayID: id) as String }
-            if deneme == 9 || deneme == attempts - 1 {
-                sckKimlikleri = content.displays.map { "\($0.displayID)" }.joined(separator: ",")
-                sonDurum = PCVirtualDisplay.stateOf(displayID: id) as String
+            if let d = content.displays.first(where: { $0.displayID == displayID }) {
+                if deneme > 0 { onProbe("TV ekranı yoklama \(deneme) sonra SCK'de göründü") }
+                return d
+            }
+            sckKimlikleri = content.displays.map { "\($0.displayID)" }.joined(separator: ",")
+            sonDurum = PCVirtualDisplay.stateOf(displayID: displayID) as String
+            if deneme % 5 == 0 {
+                onProbe("yoklama \(deneme): SCK listesi [\(sckKimlikleri)] · \(sonDurum)")
             }
             try await Task.sleep(nanoseconds: 150_000_000)
         }
-        throw CaptureError.stream("TV ekranı (displayID \(id)) ScreenCaptureKit'te görünmedi · " +
-                                  "SCK listesi: [\(sckKimlikleri)] · kurulumda: \(ilkDurum) · sonda: \(sonDurum)")
+        throw CaptureError.stream("TV ekranı (displayID \(displayID)) ScreenCaptureKit'te görünmedi · " +
+                                  "SCK listesi: [\(sckKimlikleri)] · kurulumda: \(setupState) · son: \(sonDurum)")
     }
 }
 
@@ -118,5 +131,38 @@ final class TvDisplayAppTracker: @unchecked Sendable {
         let changed = next != pids
         pids = next
         return changed
+    }
+}
+
+/// "Yeni ekran sağda mı solda mı?" — cevabı ekranların gerçek diziliminden okunur, uydurulmaz.
+enum ScreenLayout {
+    struct Screen {
+        let name: String
+        let frame: CGRect
+    }
+
+    static func describe(_ screens: [Screen], tvName: String) -> String {
+        let soldanSaga = screens.sorted { $0.frame.minX < $1.frame.minX }
+        let liste = soldanSaga.map { "\($0.name) \(Int($0.frame.width))×\(Int($0.frame.height))" }
+            .joined(separator: " · ")
+        guard let tv = soldanSaga.first(where: { $0.name == tvName }) else {
+            return "Ekranlar soldan sağa: \(liste)\n\(tvName) ŞU AN KAPALI — Başlat'a bastığında Mac'te ayrı "
+                + "1920×1080 bir ekran açılır; buraya düşdüğü konum yazılır."
+        }
+        let digerleri = soldanSaga.filter { $0.name != tvName }
+        let kenar: String
+        if let sag = digerleri.map({ $0.frame.maxX }).max(), tv.frame.minX >= sag - 1 {
+            kenar = "tüm ekranların SAĞINDA"
+        } else if let sol = digerleri.map({ $0.frame.minX }).min(), tv.frame.maxX <= sol + 1 {
+            kenar = "tüm ekranların SOLUNDA"
+        } else if let ust = digerleri.map({ $0.frame.maxY }).max(), tv.frame.minY >= ust - 1 {
+            kenar = "tüm ekranların ÜSTÜNDE"
+        } else if let alt = digerleri.map({ $0.frame.minY }).min(), tv.frame.maxY <= alt + 1 {
+            kenar = "tüm ekranların ALTINDA"
+        } else {
+            kenar = "ekranların arasında (x=\(Int(tv.frame.minX)), y=\(Int(tv.frame.minY)))"
+        }
+        return "Ekranlar soldan sağa: \(liste)\n\(tvName) AÇIK — \(kenar). Pencereyi o ekrana sürükle "
+            + "(tam ekran da olur); Mac'te ne açarsan aç TV yayını kesilmez."
     }
 }

@@ -145,7 +145,7 @@ final class MirrorEngine {
             pixels = VideoGeometry.windowPixelSize(windowId: w.id) ?? VideoGeometry.pixelSize(points: w.frame)
         case .tvDisplay:
             window = nil
-            if tvDisplay == nil { tvDisplay = try TvDisplay.create() }
+            if tvDisplay == nil { tvDisplay = try TvDisplay.create(onProbe: log) }
             pixels = tvDisplay!.pixelSize
         }
         let p = VideoGeometry.encodeProfile(pixelSize: pixels, base: profile)
@@ -214,7 +214,7 @@ final class MirrorEngine {
                                     for packet in audioPkt.packets(from: sb) { out.sendAudio(packet) }
                                 })
         } else {
-            cap = WindowCapture(displayId: tvDisplay!.displayID, width: p.width, height: p.height, fps: p.fps,
+            cap = WindowCapture(tvDisplay: tvDisplay!, width: p.width, height: p.height, fps: p.fps,
                                 onFrame: onFrame)
         }
         do { try await cap.start() } catch {
@@ -279,7 +279,7 @@ final class MirrorEngine {
         do {
             try await runPipeline(source: .window(window), profile: profile, host: host,
                                   mediaPort: port, announce: announce)
-            tvDisplay?.release(); tvDisplay = nil
+            tvDisplay = nil
             log("yayın penceresi değişti → \(window.app) — \(window.title)")
         } catch {
             // Ölçülen kusur: yeni pencere kurulamazsa yayın ölü kalıyordu.
@@ -405,7 +405,7 @@ final class MirrorEngine {
         guard isRunning || control != nil || tvDisplay != nil else { return }
         isRunning = false
         await teardownMedia()
-        tvDisplay?.release(); tvDisplay = nil
+        tvDisplay = nil
         try? await control?.stop()
         control?.disconnect()
         control = nil
