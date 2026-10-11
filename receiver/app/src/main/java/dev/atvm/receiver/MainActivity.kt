@@ -524,11 +524,11 @@ class MainActivity : Activity(), ControlLink.Listener {
             val es = if (control.peerName == "-") "eşleşme kayıtlı · bağlantı yok" else "eşleşili: ${control.peerName}"
             baslik.append("HAZIR  ·  $es\n")
             baslik.append("${computers.size} bilgisayar listeleniyor")
-            alt.append("OK: bilgisayarı seç ve yayını başlat  ·  SEARCH: yeniden tara  ·  BACK: eşleştirmeyi sil")
+            alt.append("OK: bilgisayarı seç ve yayını başlat  ·  SEARCH: yeniden tara  ·  BACK: çık (basılı tut: eşleştirmeyi sil)")
         } else {
             baslik.append("EŞLEŞME BEKLENİYOR\n")
             baslik.append("bu kodu Mac'teki PaneCast penceresine gir")
-            alt.append("SELECT: yeni PIN  ·  BACK: eşleştirmeyi sil")
+            alt.append("SELECT: yeni PIN  ·  BACK: çık")
         }
         if (!streaming) {
             teknik.append("PaneCast ${packageInfoVersion()}  ·  IP ${local.ifEmpty { listOf("(yok)") }.joinToString(", ")}\n")
@@ -623,10 +623,11 @@ class MainActivity : Activity(), ControlLink.Listener {
         return super.onKeyLongPress(keyCode, event)
     }
 
-    /// Kısa BACK: eşleşmeye dokunmaz, yalnızca ne yapılacağını söyler.
+    /// Kısa BACK uygulamadan çıkar; uzun basış eşleşme silme onayı sorar (onKeyLongPress).
+    /// Çıkış onDestroy'i çalıştırır: mDNS kaydı, soketler, çözücü ve ses hattı serbest kalır.
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_BACK && !streaming && control.isPaired && unpairDialog?.isShowing != true) {
-            if (!event.isLongPress) renderNote("Eşleşmeyi silmek için BACK tuşuna basılı tut")
+        if (keyCode == KeyEvent.KEYCODE_BACK && !streaming && unpairDialog?.isShowing != true) {
+            if (!event.isLongPress) finish()
             return true
         }
         return super.onKeyUp(keyCode, event)

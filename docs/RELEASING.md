@@ -83,9 +83,11 @@ warning (it never falls back to the debug key) and `scripts/release-android.sh` 
    - `lipo -archs` on the app binary (expect `x86_64 arm64`)
    - Install the APK on a real Android TV and run a pairing + cast session; do a Mac cast with audio.
    - `dist/RELEASE_NOTES.md` says "notarized and stapled" for macOS; if it says "not notarized", fix the setup and rebuild.
-5. Commit the version bump, tag, and push (maintainer action):
+5. Commit the version bump, tag, and push (maintainer action). Use a **lightweight** tag: the pre-push
+   privacy audit reads every history object, and an annotated tag object carries its own tagger name and
+   e-mail, so `git tag -a` gets the release rejected by this repository's own check.
    ```bash
-   git tag -a v0.1.0 -m "PaneCast 0.1.0"
+   git tag v0.1.0
    git push origin main v0.1.0
    ```
 6. Create the GitHub Release (maintainer action; add `--draft` to review first):
@@ -102,10 +104,9 @@ The AAB is `artifacts/play/PaneCast-Receiver-X.Y.Z.aab`. Notes:
   feature (both declared in the manifest), a TV banner (`banner.png`, present) and TV screenshots.
 - Enrol in **Play App Signing**. You upload with the upload key; Google re-signs the APKs it serves with
   its own app-signing key.
-- **Target API level:** the receiver currently declares `targetSdk = 30`. Play rejects uploads that
-  target too old an API level (lint flags it as `ExpiredTargetSdkVersion`). Check the current Play
-  requirement, raise `targetSdk` in `receiver/app/build.gradle.kts`, and re-test on a real TV before the
-  first Play submission. This does not affect GitHub APKs.
+- **Target API level:** the receiver declares `targetSdk = 34` (raised for the Android TV Play minimum in
+  0.2.0). Verify the current Play requirement before each upload; raising it further (35+) means re-testing
+  on a real TV, because the receiver only runs on API 30 hardware. This does not affect GitHub APKs.
 - Play also needs a privacy policy URL and a Data safety form (PaneCast collects nothing; it has no
   account, cloud or telemetry).
 
