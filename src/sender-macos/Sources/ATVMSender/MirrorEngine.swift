@@ -53,8 +53,6 @@ final class MirrorEngine {
     private var frameCount = 0
     /// Kare akışının sessiz durmasını izler; her oturumda sıfırlanır.
     private var stall = StallGuard()
-    /// "Vazgeçtik" uyarısı tek sefer loglansın diye.
-    private var stallGaveUp = false
 
     func log(_ line: String) { onLog?(line) }
 
@@ -237,7 +235,8 @@ final class MirrorEngine {
         self.startedAt = Date()
         self.frameCount = 0
         self.stall = StallGuard()
-        self.stallGaveUp = false
+        self.stallLastFrames = -1
+        self.stallProbedAt = nil
         self.onStatusNote?(nil)
         self.currentWindow = window
         self.baseProfile = profile
@@ -417,45 +416,73 @@ final class MirrorEngine {
         log("yayın durduruldu, kaynaklar serbest bırakıldı")
     }
 
-    /// Kare sayacı durduysa: bir kez yeniden kur, olmazsa kullanıcıya görünür gerekçe söyle.
-    /// Sessiz donmanın ölçülen nedeni: ayrı Space'e taşınan tam ekran pencereyi SCK hata vermeden
-    /// beslemeyi kesiyor; `didStopWithError` bu durumda gelmiyor.
+    /// Donma yorumu: kare hareketini görmek için son sayac ve pahalı ScreenCaptureKit
+    /// sorgusunu gazlamak için son yoklama anı.
+    private var stallLastFrames = -1
+    private var stallProbedAt: Date?
+
+    /// Kare sessizliğini "pencere şu an besteleniyor mu?" bilgisiyle birlikte yorumlar.
+    /// Bu ayrım şart: statik içerik = görünür+sessiz (arıza değil; v1 burada yeniden kurup
+    /// sağlıklı yayını düşürdü), ayrı Space'teki tam ekran = listelenmiyor (gerçek donma).
     private func watchForStall(now: Date) {
-        guard isRunning, let ev = stall.observe(frameCount, now: now) else { return }
-        switch ev {
-        case .resumed:
-            if stallGaveUp { log("kaynak yeniden kare üretiyor") }
-            stallGaveUp = false
-            onStatusNote?(nil)
-        case .retry:
-            log(String(format: "kaynak %.0f sn kare üretmedi → yakalama yeniden kuruluyor",
-                       StallGuard.quietLimit))
-            onStatusNote?("Kaynak kare üretmiyor — yeniden deneniyor")
-            Task { @MainActor [weak self] in await self?.restartCapture() }
-        case .stalled:
-            guard !stallGaveUp else { return }
-            stallGaveUp = true
-            let why: String
-            if case .tvDisplay = currentSource {
-                why = "TV ekranı kare üretmiyor — sanal ekran bozulmuş olabilir, yayını durdurup yeniden başlat"
-            } else {
-                why = "Pencere kare üretmiyor (ayrı Space'te tam ekran olabilir) — TV ekranı modunu kullan"
-            }
-            log("yakalama takıldı: \(why)")
-            onStatusNote?(why)
+        guard isRunning else { return }
+        if frameCount != stallLastFrames {
+            stallLastFrames = frameCount
+            stallProbedAt = nil
+            applyStall(stall.observe(frames: frameCount, present: true, exists: true, now: now))
+            return
+        }
+        guard stall.quietSince(now) >= StallGuard.quietLimit else { return }
+        // TV ekranı modu zaten her zaman bestelenen bir ekranı kaynak alıyor; sorgu gerekmez.
+        guard case .window(let window) = currentSource else {
+            applyStall(stall.observe(frames: frameCount, present: true, exists: true, now: now))
+            return
+        }
+        let sinceProbe = stallProbedAt.map { now.timeIntervalSince($0) } ?? .greatestFiniteMagnitude
+        guard sinceProbe >= 2 else { return }
+        stallProbedAt = now
+        let id = window.id
+        Task { @MainActor [weak self] in
+            guard let self, self.isRunning else { return }
+            let exists = WindowCapture.windowExists(id)
+            let present = exists ? await WindowCapture.windowIsPresent(id) : false
+            self.applyStall(self.stall.observe(frames: self.frameCount, present: present,
+                                               exists: exists, now: Date()))
         }
     }
 
-    /// Donmuş kaynağa tek şans. Kurulamazsa hattı açık tutmanın anlamı yok: temiz durdur.
+    private func applyStall(_ ev: StallGuard.Event?) {
+        guard let ev else { return }
+        switch ev {
+        case .resumed:
+            log("kaynak yeniden kare üretiyor")
+            onStatusNote?(nil)
+            requestKeyFrame()
+        case .hidden:
+            log(String(format: "kaynak %.0f sn kare üretmiyor ve pencere artık bestelenmiyor",
+                       StallGuard.quietLimit))
+            onStatusNote?("Pencere artık görünür değil (ayrı Space'te tam ekran olabilir) — TV ekranı modu bu durumda donmaz")
+        case .retry:
+            log("pencere geri geldi ama kare hâlâ yok → yakalama yeniden kuruluyor")
+            onStatusNote?("Kaynak kare üretmiyor — yeniden deneniyor")
+            Task { @MainActor [weak self] in await self?.restartCapture() }
+        case .gone:
+            log("pencere kapatıldı → yayın sonlandırılıyor")
+            onStatusNote?("Pencere kapatıldı — yayın durduruldu")
+            Task { @MainActor [weak self] in await self?.stop() }
+        }
+    }
+
+    /// Yalnızca pencere yeniden görünür olduğunda anlamlı tek deneme. Başarısız olursa yayını
+    /// DÜŞÜRMÜYOR: ölçülen vaka, yoklukta yapılan denemenin "pencere bulunamadı" ile bitmesiydi.
     private func restartCapture() async {
         guard isRunning, let cap = capture else { return }
         do {
             try await cap.restart()
             log("yakalama yeniden kuruldu")
         } catch {
-            log("yakalama yeniden kurulamadı (\(error)) → yayın durduruluyor")
-            onStatusNote?("Kaynak yeniden yakalanamadı — yayın durduruldu")
-            await stop()
+            log("yakalama yeniden kurulamadı (\(error)) — yayın açık bırakıldı")
+            onStatusNote?("Kaynak yeniden yakalanamadı — pencereyi geri getir ya da TV ekranı modunu kullan")
         }
     }
 }

@@ -4,8 +4,7 @@ import CoreMedia
 import CoreVideo
 import ScreenCaptureKit
 
-struct WindowInfo: Identifiable, CustomStringConvertible {
-    let id: UInt32
+struct WindowInfo: Identifiable, CustomStringConvertible {    let id: UInt32
     let app: String
     /// Sesin kaynağı: yayınlanan uygulamanın Mac'te duyulan sesini susturmak için.
     let pid: pid_t
@@ -236,12 +235,28 @@ final class WindowCapture: NSObject, @unchecked Sendable {
         self.stream = nil
     }
 
-    /// Aynı kaynakla yakalamayı taze kurar: `start()` SCShareableContent'i yeniden sorup
-    /// yeni bir filtre kurar, böylece yüzey yeniden besteleniyorsa akış döner.
+    /// Aynı kaynakla yakalamayı taze kurar. Yalnızca pencere yeniden görünür olduğunda
+    /// anlamlı: ayrı Space'teki pencere `SCShareableContent` listesinde de yokken
+    /// `start()` "pencere bulunamadı" ile başarısız oluyor (ölçüldü).
     /// Kare sayaçları sıfırlanmaz — donma tespiti onların monoton artmasına dayanıyor.
     func restart() async throws {
         await stop()
         try await start()
+    }
+
+    /// Pencere bu anda besteleniyor mu? (ScreenCaptureKit yalnız aktif Space'in pencerelerini listeler.)
+    static func windowIsPresent(_ id: UInt32) async -> Bool {
+        guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        else { return false }
+        return content.windows.contains { $0.windowID == id }
+    }
+
+    /// Pencere WindowServer'da hâlâ var mı — hangi Space'te olduğuna bakmaz.
+    /// Yoksa kaynak kapatılmıştır; beklemenin anlamı yok.
+    static func windowExists(_ id: UInt32) -> Bool {
+        guard let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]]
+        else { return false }
+        return list.contains { ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value == id }
     }
 
     /// Akış kapanmadan çıktı boyutunu değiştirir (pencere yeniden boyutlandı).
