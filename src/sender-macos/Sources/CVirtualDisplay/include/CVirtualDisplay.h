@@ -43,4 +43,9 @@
                             refreshRate:(double)refreshRate
                                   error:(NSString * _Nullable * _Nullable)error;
 @property(readonly, nonatomic) CGDirectDisplayID displayID;
+/// Kurulum anındaki WindowServer durumu ("aktifListede=… isOnline=… kip=…"); teşhis için.
+@property(readwrite, nonatomic, copy, nullable) NSString *lastState;
+/// Teşhis: ekran WindowServer'da hangi durumda (aktif/çevrimiçi/uykuda/mevcut kip).
+/// ScreenCaptureKit'in listesinde görünmeyen sanal ekranın nedenini ayırmak için.
++ (NSString *)describeDisplay:(CGDirectDisplayID)displayID NS_SWIFT_NAME(stateOf(displayID:));
 @end

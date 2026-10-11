@@ -117,8 +117,11 @@ class H264DecoderRenderer {
     /** Yeni oturum. Aynı yüzeyde çalışan bir örnek varsa korunur: flush + sayaç sıfırlama
      *  (pencere değişimi). Yeni örnek yalnız çözücü yoksa ya da yüzey değiştiyse kurulur. */
     fun startOrReuse(width: Int, height: Int, fps: Int, surface: Surface): Boolean {
-        if (codec != null && loopAlive && codecSurface === surface && width <= 1920 && height <= 1088 &&
-            width <= allocW && height <= allocH) {
+        // Örnek YALNIZ kodlanan boyut birebir aynıysa korunur. Küçük boyutu alt sınır saymak,
+        // akış ortasında boyut değişince (ölçüldü: 1920x992 ↔ 1920x1088) aynı OMX örneğini
+        // flush ile geri getiriyordu: "nBufferCountActual … failed: -22" ve sonra çözücü
+        // çıktı üretmeyi bırakıyor — kullanıcı sesi duymaya devam edip görüntünün donduğunu görüyor.
+        if (codec != null && loopAlive && codecSurface === surface && width == allocW && height == allocH) {
             lastProfile = "${width}×$height@$fps"
             frameStepUs = 1_000_000L / max(1, fps)
             val r = FlushRequest("yeni oturum ${width}x$height", newSession = true)

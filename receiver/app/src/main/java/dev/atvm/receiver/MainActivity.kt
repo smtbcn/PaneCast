@@ -425,6 +425,12 @@ class MainActivity : Activity(), ControlLink.Listener {
     private var lastRendered = 0L
     private var lastStatsAt = 0L
     private var lastFps = 0.0
+    /// "AU geliyor ama çözücü kare üretmiyor" bekçisi: mevcut kilitlenme dedektörü
+    /// çözücüye besleme ilerlerken çıktı durduğunu varsayıyor; boyut değişimi kaynaklı
+    /// kilitlenmede besleme de durduğu için hiç tetiklenmiyordu (ölçüldü).
+    private var lastAuObserved = 0L
+    private var lastRenderProgress = 0L
+    private var wedgedTicks = 0
 
     private val statsRunnable = object : Runnable {
         override fun run() {
@@ -467,6 +473,24 @@ class MainActivity : Activity(), ControlLink.Listener {
             " inflight=" + decoder.inFlight() + " cdrop=" + decoder.droppedInDecoder.get() + " flush=" + decoder.flushes.get() + " ptsMiss=" + decoder.ptsMiss.get() + " queue=" + decoder.queueSize() +
             " latency=" + decoder.latencySummary() +
             " " + audio.stats() + " " + (avClock?.stats() ?: ""))
+
+        // Bekçi: access unit'ler gelmeye devam ederken çözücü kare üretmiyorsa örnek
+        // kilitlenmiştir (boyut değişimi ölçülen neden). 3 sn bekleyip kurtarmaya giriyoruz;
+        // kurtarma zinciri kademe kademe flush → anahtar kare → yeniden kurma deniyor.
+        val auNow = media.accessUnits.get()
+        if (r != lastRenderProgress) {
+            lastRenderProgress = r
+            wedgedTicks = 0
+            if (r > 0) recoveries = 0        // tekrar kare üretmeye başladı: bütçeyi tazele
+        } else if (auNow > lastAuObserved) {
+            wedgedTicks++
+        }
+        lastAuObserved = auNow
+        if (wedgedTicks >= 3) {
+            wedgedTicks = 0
+            Log.e(TAG, "AU geliyor ama çözücü 3 sn kare üretmedi (au=$auNow rendered=$r) → kurtarma zinciri")
+            recoverDecoder()
+        }
     }
 
     override fun onResume() {
@@ -538,11 +562,32 @@ class MainActivity : Activity(), ControlLink.Listener {
 
     // ---- kumanda ----
 
+    /// Eşleşme silme onayı. Tek basışla silme geri alınamaz: kullanıcı yeniden kod girmek
+    /// zorunda kalıyordu. Artık BACK'e basılı tutuluyor, sonra "Sil" seçiliyor.
+    private var unpairDialog: android.app.AlertDialog? = null
+
+    private fun confirmUnpair() {
+        unpairDialog?.dismiss()
+        unpairDialog = android.app.AlertDialog.Builder(this)
+            .setTitle("Eşleşme silinsin mi?")
+            .setMessage("Bu TV ile Mac arasındaki eşleşme kaldırılır. Yayına devam etmek için TV ekranındaki kodu Mac'e yeniden girmen gerekir.")
+            .setPositiveButton("Sil") { _, _ ->
+                control.forgetPairing()
+                renderStatus()
+            }
+            .setNegativeButton("Vazgeç", null)
+            .show()
+    }
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         when (keyCode) {
             KeyEvent.KEYCODE_BACK -> {
+                if (unpairDialog?.isShowing == true) return super.onKeyDown(keyCode, event)
                 if (streaming) { stopStream("kullanıcı DURDUR"); return true }
-                if (control.isPaired) { control.forgetPairing(); renderStatus(); return true }
+                if (control.isPaired) {
+                    event.startTracking()      // uzun basış onKeyLongPress'e düşer
+                    return true
+                }
                 return super.onKeyDown(keyCode, event)
             }
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
@@ -567,6 +612,24 @@ class MainActivity : Activity(), ControlLink.Listener {
             }
         }
         return super.onKeyDown(keyCode, event)
+    }
+
+    /// BACK'a basılı tutulunca eşleşme silme onayı sorulur.
+    override fun onKeyLongPress(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_BACK && !streaming && control.isPaired && unpairDialog?.isShowing != true) {
+            confirmUnpair()
+            return true
+        }
+        return super.onKeyLongPress(keyCode, event)
+    }
+
+    /// Kısa BACK: eşleşmeye dokunmaz, yalnızca ne yapılacağını söyler.
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_BACK && !streaming && control.isPaired && unpairDialog?.isShowing != true) {
+            if (!event.isLongPress) renderNote("Eşleşmeyi silmek için BACK tuşuna basılı tut")
+            return true
+        }
+        return super.onKeyUp(keyCode, event)
     }
 
     // ---- mDNS yayını (Mac'in TV'yi port/sabit IP girmeden bulması için) ----

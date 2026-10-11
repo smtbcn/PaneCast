@@ -33,13 +33,23 @@ final class TvDisplay {
     func release() { virtual = nil }
 
     /// ScreenCaptureKit yeni ekranı hemen listelemeyebilir: kısa süre yoklanır.
-    static func shareableDisplay(_ id: CGDirectDisplayID, attempts: Int = 25) async throws -> SCDisplay {
-        for _ in 0..<attempts {
+    /// 40 × 150 ms = 6 sn: ekran "çevrimiçi" olana kadar SCK listesine hiç girmeyebiliyor.
+    static func shareableDisplay(_ id: CGDirectDisplayID, attempts: Int = 40) async throws -> SCDisplay {
+        var sonDurum = "-"
+        var ilkDurum = "-"
+        var sckKimlikleri = "-"
+        for deneme in 0..<attempts {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
             if let d = content.displays.first(where: { $0.displayID == id }) { return d }
+            if deneme == 0 { ilkDurum = PCVirtualDisplay.stateOf(displayID: id) as String }
+            if deneme == 9 || deneme == attempts - 1 {
+                sckKimlikleri = content.displays.map { "\($0.displayID)" }.joined(separator: ",")
+                sonDurum = PCVirtualDisplay.stateOf(displayID: id) as String
+            }
             try await Task.sleep(nanoseconds: 150_000_000)
         }
-        throw CaptureError.stream("TV ekranı (displayID \(id)) ScreenCaptureKit'te görünmedi")
+        throw CaptureError.stream("TV ekranı (displayID \(id)) ScreenCaptureKit'te görünmedi · " +
+                                  "SCK listesi: [\(sckKimlikleri)] · kurulumda: \(ilkDurum) · sonda: \(sonDurum)")
     }
 }
 
