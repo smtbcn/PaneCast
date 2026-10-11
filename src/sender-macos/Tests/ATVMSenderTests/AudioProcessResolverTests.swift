@@ -76,4 +76,58 @@ final class AudioProcessResolverTests: XCTestCase {
         let rows = [row(1, pid: 610, responsible: 999, bundle: "org.example.app.helper")]
         XCTAssertTrue(AudioProcessResolver.resolve(appPid: 600, appBundleID: "org.example.app", ownPid: own, rows: rows).isEmpty)
     }
+
+    // MARK: çoklu kök (TV ekranı modu)
+
+    func testMultipleRootsResolveToUnionWithoutDuplicates() {
+        let rows = [
+            row(1, pid: 500, responsible: 500, bundle: "org.mozilla.firefox"),
+            row(2, pid: 700, responsible: 700, bundle: "com.google.Chrome"),
+            row(3, pid: 710, ppid: 700, responsible: 700, bundle: "com.google.Chrome.helper"),
+            row(4, pid: 600, responsible: 600, bundle: "com.example.other"),
+        ]
+        let roots = [AudioRoot(pid: 500, bundleID: "org.mozilla.firefox"),
+                     AudioRoot(pid: 700, bundleID: "com.google.Chrome"),
+                     AudioRoot(pid: 500, bundleID: "org.mozilla.firefox")]   // yinelenen kök
+        let got = AudioProcessResolver.resolve(roots: roots, ownPid: own, rows: rows)
+        XCTAssertEqual(got.map { $0.objectID }, [1, 2, 3])
+        XCTAssertEqual(AudioProcessResolver.bundleIDs(resolved: got, appBundleIDs: roots.map { $0.bundleID }),
+                       ["com.google.Chrome", "com.google.Chrome.helper", "org.mozilla.firefox"])
+    }
+
+    func testRootLeavingTheSetShrinksTheResolvedSet() {
+        let rows = [
+            row(1, pid: 500, responsible: 500, bundle: "org.mozilla.firefox"),
+            row(2, pid: 700, responsible: 700, bundle: "com.google.Chrome"),
+        ]
+        let both = AudioProcessResolver.resolve(roots: [AudioRoot(pid: 500, bundleID: nil), AudioRoot(pid: 700, bundleID: nil)],
+                                                ownPid: own, rows: rows)
+        let one = AudioProcessResolver.resolve(roots: [AudioRoot(pid: 700, bundleID: nil)], ownPid: own, rows: rows)
+        XCTAssertEqual(both.map { $0.objectID }, [1, 2])
+        XCTAssertEqual(one.map { $0.objectID }, [2])
+        XCTAssertTrue(AudioProcessResolver.resolve(roots: [], ownPid: own, rows: rows).isEmpty)
+    }
+
+    func testOwnPidExcludedEvenAsOneOfManyRoots() {
+        let rows = [row(1, pid: own, responsible: own, bundle: "app.panecast.sender"),
+                    row(2, pid: 500, responsible: 500, bundle: "org.mozilla.firefox")]
+        let got = AudioProcessResolver.resolve(roots: [AudioRoot(pid: own, bundleID: "app.panecast.sender"),
+                                                       AudioRoot(pid: 500, bundleID: nil)],
+                                               ownPid: own, rows: rows)
+        XCTAssertEqual(got.map { $0.objectID }, [2])
+    }
+
+    func testTvDisplayWindowOwnersByCenterLayerAndOwnPid() {
+        let tv = CGRect(x: 1512, y: 0, width: 1920, height: 1080)
+        let c: [TvDisplayWindows.Candidate] = [
+            .init(pid: 10, frame: tv, layer: 0),                                         // tam ekran pencere
+            .init(pid: 11, frame: CGRect(x: 1700, y: 100, width: 800, height: 600), layer: 0),
+            .init(pid: 11, frame: CGRect(x: 2000, y: 200, width: 300, height: 300), layer: 0),   // aynı uygulama, yinelenmez
+            .init(pid: 12, frame: CGRect(x: 100, y: 100, width: 800, height: 600), layer: 0),    // ana ekranda
+            .init(pid: 13, frame: tv, layer: 25),                                        // menü çubuğu gibi üst katman
+            .init(pid: 900, frame: tv, layer: 0),                                        // kendi sürecimiz
+            .init(pid: 14, frame: CGRect(x: 1000, y: 0, width: 1000, height: 600), layer: 0),    // merkezi ana ekranda (x=1500)
+        ]
+        XCTAssertEqual(TvDisplayWindows.ownerPids(c, displayFrame: tv, ownPid: 900), [10, 11])
+    }
 }
