@@ -38,6 +38,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private var discoveryTimer: Timer?
     private var windowTimer: Timer?
     private var switching = false
+    /// Liste yenilerken yapılan programatik seçimi kullanıcı seçiminden ayırır.
+    private var applyingSelection = false
     /// Yayın TV'den başlatıldıysa TV'nin host'u: Mac durdurunca aynı bağlantıdan bildirilir.
     private var tvInitiatedHost: String?
     /// Yakalama takıldığında durum şeridindeki tek satır; nil = normal durum adı.
@@ -347,6 +349,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
 
     func tableViewSelectionDidChange(_ note: Notification) {
         if let table = note.object as? NSTableView, table === windowTable {
+            // Programatik seçim yayını kaçırmasın: ölçülen kusur akışın Dock penceresine
+            // geçmesiydi. Yalnız kullanıcının gerçekten seçtiği satır yayını taşır.
+            guard !applyingSelection else { return }
             Task { @MainActor in await self.windowSelectionChanged() }
         } else {
             refreshRunButton()
@@ -613,16 +618,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             $0.app.lowercased().contains(q) || $0.title.lowercased().contains(q)
         }
         let keep = restoring ?? shown[safe: windowTable.selectedRow]?.id
+        // Programatik seçimi kullanıcı seçimi gibi gösteren tuzak: `reloadData` +
+        // `selectRowIndexes` → tableViewSelectionDidChange → switchWindow. Yayın sırasında
+        // izlenen pencere listeden düşünce (tam ekran yeni kimlik üretiyor) satır 0'a
+        // düşüyordu ve akış Dock penceresine geçiyordu (ölçüldü).
+        applyingSelection = true
         windowTable.reloadData()
         if let keep, let i = shown.firstIndex(where: { $0.id == keep }) {
             windowTable.selectRowIndexes(IndexSet(integer: i), byExtendingSelection: false)
-        } else if !shown.isEmpty {
-            // Hiç seçili yoksa ilk satırı seç: TV'den gelen "yayına başla" isteği
+        } else if !shown.isEmpty, !engine.isRunning {
+            // Yalnız yayın YOKKEN ilk satırı seç: TV'den gelen "yayına başla" isteği
             // seçimsiz geldiğinde reddediliyordu (ölçüldü: "pencere seçili değil").
             windowTable.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
-            if windowTable.selectedRow != 0 { windowTable.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false) }
         }
+        applyingSelection = false
+        followLostWindow()
         refreshLists()
+    }
+
+    /// İzlenen pencere listeden düştüyse yayını rastgele bir satıra değil, AYNI uygulamanın
+    /// en büyük penceresine taşı (tarayıcıda tam ekrana geçiş yeni pencere kimliği üretir).
+    private func followLostWindow() {
+        guard !switching, engine.isRunning, let cur = engine.currentWindow,
+              !shown.contains(where: { $0.id == cur.id }) else { return }
+        guard let twin = shown.filter({ $0.pid == cur.pid }).max(by: {
+            $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
+        }) else {
+            log("izlenen pencere artık listede değil; aynı uygulamanın yedek penceresi de yok — akış mevcut kaynakta bırakıldı")
+            return
+        }
+        switching = true
+        Task { @MainActor [weak self] in
+            defer { self?.switching = false }
+            log("izlenen pencere listeden düştü → aynı uygulamanın penceresine geçiliyor: \(twin.app) — \(twin.title)")
+            do { try await self?.engine.switchWindow(twin) }
+            catch { log("geçiş başarısız: \(error)") }
+        }
     }
 
     private func refreshLists() {
