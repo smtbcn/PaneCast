@@ -1,0 +1,17 @@
+# Local signing configuration. Certificate names identify a person, so the real file
+# (scripts/signing.local.sh) is gitignored. Copy this file and fill in your own values.
+# Plain assignments only; the scripts source this file.
+
+# Day-to-day development builds (scripts/build-sender-app.sh). Keeps the macOS Screen
+# Recording grant across rebuilds. Leave empty for ad-hoc signing (grant resets each build).
+#   security find-identity -v -p codesigning
+IDENTITY=""
+
+# Release builds (scripts/release-macos.sh): "Developer ID Application" identity,
+# either the full name shown by find-identity or its SHA-1 hash.
+RELEASE_IDENTITY=""
+
+# Keychain profile name created once with:
+#   xcrun notarytool store-credentials "<profile-name>" --apple-id ... --team-id ... --password ...
+# Leave empty to produce signed-but-not-notarized output (loud warning, not for publishing).
+NOTARY_PROFILE=""

@@ -1,0 +1,63 @@
+# derleme çıktıları
+.build/
+*.build/
+receiver/.gradle/
+receiver/app/build/
+receiver/local.properties
+.cache/
+artifacts/build/
+*.apk
+*.dSYM/
+
+# araç/küme referans kaynakları — depoya girmesin (lisans + boyut)
+research/clones/
+
+# sistem
+.DS_Store
+*.swp
+
+# yerel sırlar/eşleşme anahtarları asla
+*.key
+paired_keys.json
+secrets/
+
+# derlenmiş probe ikilileri (kaynak yeterli)
+artifacts/probe/vtprobe
+*.o
+
+# marka: PNG/iconset üretimidir — scripts/make-icons.sh ile yeniden üretilir
+assets/branding/png/
+assets/branding/AppIcon.iconset/
+
+# yerel kimlik/hook ayari bu depoya aittir (bkz. .githooks/)
+
+# Ham cihaz/ağ dökümleri ve derleme çıktıları YERELDİR.
+# İçinde cihaz seri/Cihaz kimliği/SSID gibi izler olabilir; scripts/ ile yeniden üretilir.
+# Bu depo yayınlanacağı için artifacts/ tamamıyla dışarıda tutulur.
+artifacts/
+
+# yerel imza ayarı (sertifika adı kişisel kimlik taşır) ve yerel cihaz/ağ değerleri
+scripts/signing.local.sh
+scripts/env.local.sh
+scripts/*.local.sh
+
+# kişisel veri denetiminin yerel sabitleri (kişisel veri taşır, depolanmaz)
+scripts/privacy-patterns.local.txt
+
+# yerel git kancaları (kişisel iş akışı; depoya girmez)
+.githooks/
+
+# Yalnız uygulama depoya gider: kendi analiz/araştırma notlarımız ve ajan talimatlarımız
+# yerelde kalır (üçüncü taraf proje adları, cihaz ölçümleri, iç kararlar burada durur).
+notes/
+AGENTS.md
+
+# yayın çıktıları ve imza malzemesi: asla depoya girmez
+dist/
+receiver/keystore.properties
+*.jks
+*.keystore
+*.p12
+*.aab
+scripts/*.local.*
+!scripts/*.local.sh.example

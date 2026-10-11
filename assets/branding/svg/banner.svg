@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0B1220"/><stop offset="1" stop-color="#0E7490"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="720" fill="url(#bg)"/>
+  <g transform="translate(96,150) scale(0.58)">
+  <rect x="152" y="216" width="404" height="332" rx="40" fill="#F8FAFC"/>
+  <rect x="152" y="216" width="404" height="72" rx="40" fill="#94A3B8"/>
+  <circle cx="200" cy="252" r="14" fill="#F8FAFC"/><circle cx="240" cy="252" r="14" fill="#F8FAFC"/>
+  <rect x="472" y="420" width="400" height="300" rx="44" fill="#0B1220" stroke="#22D3EE" stroke-width="36"/>
+  <path d="M560 570 h224 M712 500 l72 70 l-72 70" fill="none" stroke="#22D3EE" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="608" y="740" width="128" height="34" rx="17" fill="#22D3EE"/>
+  </g>
+  <text x="700" y="340" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="86" font-weight="700" fill="#F8FAFC">AndroidTV</text>
+  <text x="700" y="440" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="86" font-weight="700" fill="#22D3EE">Mirror</text>
+  <text x="702" y="512" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="27" fill="#94A3B8">pencere → TV, yerel ağ, düşük gecikme</text>
+</svg>

@@ -1,0 +1,63 @@
+name: CI
+
+# Build and unit checks only. No signing, no secrets: signed release artifacts come from
+# the maintainer's local scripts (docs/RELEASING.md).
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hygiene:
+    name: Repository hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Personal-data scan (generic patterns)
+        run: python3 scripts/scrub-personal-data.py --check
+
+  receiver:
+    name: Android TV receiver
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14.4"
+      - name: Accept Android SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+      - name: Debug build
+        working-directory: receiver
+        run: gradle assembleDebug
+      - name: Release build (unsigned, no keystore in CI)
+        working-directory: receiver
+        run: gradle assembleRelease bundleRelease
+      - name: Reorder/loss-recovery selfcheck
+        # Compiles the pure-Kotlin recovery logic with the Kotlin compiler from the gradle cache.
+        run: scripts/test-receiver-reorder.sh
+
+  sender:
+    name: macOS sender
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+      - name: Build
+        working-directory: src/sender-macos
+        run: swift build
+      - name: Test
+        working-directory: src/sender-macos
+        run: swift test
