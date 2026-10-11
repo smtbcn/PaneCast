@@ -10,8 +10,11 @@ let package = Package(
     name: "atvm-sender",
     platforms: [.macOS(.v14)],
     targets: [
+        // CoreGraphics'in özel sanal ekran sınıfları için küçük Objective-C köprüsü (TV ekranı modu).
+        .target(name: "CVirtualDisplay", path: "Sources/CVirtualDisplay"),
         .executableTarget(
             name: "atvm-sender",
+            dependencies: ["CVirtualDisplay"],
             path: "Sources/ATVMSender",
             linkerSettings: [
                 .linkedFramework("ScreenCaptureKit"),

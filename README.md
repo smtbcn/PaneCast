@@ -53,6 +53,13 @@ Check downloads against `SHA256SUMS.txt` from the same release.
 
 The TV needs a hardware H.264 decoder (there is no software fallback).
 
+## TV display mode
+
+Pick **TV display (separate screen)** in the app to cast a whole virtual display instead of one window. The Mac opens a TV-sized 1920x1080 display named "PaneCast TV"; windows you move there (full screen is fine) and their audio play on the TV. Apps that leave that display are un-muted on the Mac again. Because the virtual display is always visible, switching apps on your main display no longer freezes the cast (a full-screen window on the main display is hidden by macOS when you switch away). CLI: `mirror --tv <ip> --tv-display`.
+
+- System Settings → Desktop & Dock → "Displays have separate Spaces" must stay on (the default).
+- The mode relies on a private macOS API (CoreGraphics virtual displays). A future macOS update could break it; the app then disables the mode with a message instead of crashing.
+
 ## Performance
 
 Measured on one setup: Mac mini M4 on Ethernet, Android 11 TV on 5 GHz Wi-Fi. Other

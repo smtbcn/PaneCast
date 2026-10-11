@@ -89,8 +89,12 @@ final class MirrorEngine {
 
     /// Seçili pencereyi yayınlar. connectAndHello() (ve gerekirse submitPin()) sonrasında çağrılır.
     func beginStream(window: WindowInfo, profile: H264Encoder.Profile) async throws {
+        try await beginStream(source: .window(window), profile: profile)
+    }
+
+    func beginStream(source: CastSource, profile: H264Encoder.Profile) async throws {
         guard let control else { throw EngineError.notConnected }
-        try await runPipeline(window: window, profile: profile, host: controlHost, mediaPort: mediaPort) { info in
+        try await runPipeline(source: source, profile: profile, host: controlHost, mediaPort: mediaPort) { info in
             try await control.requestStart(info)
         }
     }
@@ -99,24 +103,49 @@ final class MirrorEngine {
     /// `start` aynı sokete yazılır ve yanıt oradan beklenir.
     func beginForTv(window: WindowInfo, profile: H264Encoder.Profile, host: String, mediaPort: UInt16,
                     announce: @escaping (StartInfo) async -> Bool) async throws {
-        try await runPipeline(window: window, profile: profile, host: host, mediaPort: mediaPort) { info in
+        try await beginForTv(source: .window(window), profile: profile, host: host, mediaPort: mediaPort, announce: announce)
+    }
+
+    func beginForTv(source: CastSource, profile: H264Encoder.Profile, host: String, mediaPort: UInt16,
+                    announce: @escaping (StartInfo) async -> Bool) async throws {
+        try await runPipeline(source: source, profile: profile, host: host, mediaPort: mediaPort) { info in
             guard await announce(info) else { throw EngineError.tvRejected }
         }
     }
 
-    private func runPipeline(window: WindowInfo, profile: H264Encoder.Profile,
+    /// Yayının kaynağı: tek pencere ya da Mac'te açılan sanal "TV ekranı"nın tamamı.
+    enum CastSource {
+        case window(WindowInfo)
+        case tvDisplay
+    }
+
+    /// TV ekranı modundaki sanal ekran: oturum boyunca (pencere geçişleri dahil) tutulur, `stop()` bırakır.
+    private var tvDisplay: TvDisplay?
+    private var tvTracker: TvDisplayAppTracker?
+    private(set) var currentSource: CastSource?
+
+    private func runPipeline(source: CastSource, profile: H264Encoder.Profile,
                              host: String, mediaPort: UInt16,
                              announce: @escaping (StartInfo) async throws -> Void) async throws {
         guard !isRunning else { throw EngineError.alreadyRunning }
         self.announce = announce
         self.mediaHost = host
 
-        // Kodlama çerçevesi: pencerenin PİKSEL boyutu (nokta × ekran ölçeği), profil kutusuna
-        // oranı bozmadan sığdırılmış (VideoGeometry). `profile` özgün profildir; geçişte yine ondan hesaplanır.
-        let pixels = VideoGeometry.windowPixelSize(windowId: window.id)
-            ?? VideoGeometry.pixelSize(points: window.frame)
+        // Kodlama çerçevesi: kaynağın PİKSEL boyutu (pencere: nokta × ekran ölçeği; TV ekranı: sabit 1920x1080),
+        // profil kutusuna oranı bozmadan sığdırılmış (VideoGeometry). `profile` özgün profildir; geçişte yine ondan hesaplanır.
+        let pixels: CGSize
+        let window: WindowInfo?
+        switch source {
+        case .window(let w):
+            window = w
+            pixels = VideoGeometry.windowPixelSize(windowId: w.id) ?? VideoGeometry.pixelSize(points: w.frame)
+        case .tvDisplay:
+            window = nil
+            if tvDisplay == nil { tvDisplay = try TvDisplay.create() }
+            pixels = tvDisplay!.pixelSize
+        }
         let p = VideoGeometry.encodeProfile(pixelSize: pixels, base: profile)
-        log("pencere \(Int(pixels.width))x\(Int(pixels.height)) piksel → \(p.width)x\(p.height) kodlanacak (profil kutusu \(profile.width)x\(profile.height))")
+        log("\(window == nil ? "TV ekranı" : "pencere") \(Int(pixels.width))x\(Int(pixels.height)) piksel → \(p.width)x\(p.height) kodlanacak (profil kutusu \(profile.width)x\(profile.height))")
 
         let epoch = SessionEpoch.now()
         let ssrc = UInt32.random(in: 1...UInt32.max)
@@ -152,24 +181,47 @@ final class MirrorEngine {
         log("TV akışı onayladı → \(host):\(mediaPort)/udp  \(p.width)x\(p.height)@\(p.fps) + ses")
 
         // Ses: önce uygulamanın süreç tap'i (yakalar + Mac'te susturur); kurulamazsa SCK yedeği.
-        let stopTap: (() -> Void)? = capturesAudio
-            ? AppAudioSource.start(pid: window.pid, muteLocally: mutesLocalAppAudio, packetizer: audioPkt,
-                                   send: { [out] in out.sendAudio($0) },
-                                   log: { [weak self] line in Task { @MainActor in self?.log(line) } })
-            : nil
+        // TV ekranı modunda kaynak, ekrandaki pencerelerin sahiplerinin birleşimidir (saniyede bir yenilenir);
+        // SCK yedeği orada yok (ekran sesi Mac'in tüm sesini taşırdı).
+        let tapLog: (String) -> Void = { [weak self] line in Task { @MainActor in self?.log(line) } }
+        var tracker: TvDisplayAppTracker?
+        let stopTap: (() -> Void)?
+        if !capturesAudio {
+            stopTap = nil
+        } else if let window {
+            stopTap = AppAudioSource.start(pid: window.pid, muteLocally: mutesLocalAppAudio, packetizer: audioPkt,
+                                           send: { [out] in out.sendAudio($0) }, log: tapLog)
+        } else {
+            let t = TvDisplayAppTracker(displayID: tvDisplay!.displayID, log: tapLog)
+            await t.start()
+            tracker = t
+            stopTap = AppAudioSource.start(roots: { [t] in t.roots() }, pollInterval: 1.0,
+                                           muteLocally: mutesLocalAppAudio, packetizer: audioPkt,
+                                           send: { [out] in out.sendAudio($0) }, log: tapLog)
+        }
 
-        let cap = WindowCapture(windowId: window.id, width: p.width, height: p.height, fps: p.fps,
+        let onFrame: (CVPixelBuffer, CMTime) -> Void = { [enc] pb, pts in enc.encode(pb, presentationTime: pts) }
+        let cap: WindowCapture
+        if let window {
+            cap = WindowCapture(windowId: window.id, width: p.width, height: p.height, fps: p.fps,
                                 audio: capturesAudio && stopTap == nil,
-                                onFrame: { [enc] pb, pts in enc.encode(pb, presentationTime: pts) },
+                                onFrame: onFrame,
                                 onAudio: { [audioPkt, out] sb in
                                     for packet in audioPkt.packets(from: sb) { out.sendAudio(packet) }
                                 })
+        } else {
+            cap = WindowCapture(displayId: tvDisplay!.displayID, width: p.width, height: p.height, fps: p.fps,
+                                onFrame: onFrame)
+        }
         do { try await cap.start() } catch {
             stopTap?()
+            tracker?.stop()
             throw error
         }
 
+        self.tvTracker = tracker
         self.stopAppTap = stopTap
+        self.currentSource = source
         self.encoder = enc
         self.packetizer = pkt
         self.audioPacketizer = audioPkt
@@ -183,8 +235,12 @@ final class MirrorEngine {
         self.currentProfile = p
         self.appliedPixels = pixels
         self.pipelineGeneration += 1
-        log("yakalama başladı: \(window.app) — \(window.title)")
-        startResizeWatcher()
+        if let window {
+            log("yakalama başladı: \(window.app) — \(window.title)")
+            startResizeWatcher()
+        } else {
+            log("yakalama başladı: \(TvDisplay.name) (displayID \(tvDisplay!.displayID))")
+        }
 
         statsTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.emitStats() }
@@ -209,12 +265,13 @@ final class MirrorEngine {
         let profile = baseProfile ?? H264Encoder.Profile.presets["1080p60"]!
         let host = mediaHost
         let port = mediaPort
-        let previous = currentWindow
+        let previous = currentSource
         isRunning = false
         await teardownMedia()
         do {
-            try await runPipeline(window: window, profile: profile, host: host,
+            try await runPipeline(source: .window(window), profile: profile, host: host,
                                   mediaPort: port, announce: announce)
+            tvDisplay?.release(); tvDisplay = nil
             log("yayın penceresi değişti → \(window.app) — \(window.title)")
         } catch {
             // Ölçülen kusur: yeni pencere kurulamazsa yayın ölü kalıyordu.
@@ -223,9 +280,9 @@ final class MirrorEngine {
             if let previous {
                 isRunning = false
                 await teardownMedia()
-                try? await runPipeline(window: previous, profile: profile, host: host,
+                try? await runPipeline(source: previous, profile: profile, host: host,
                                        mediaPort: port, announce: announce)
-                if isRunning { log("yayın önceki pencerede sürüyor: \(previous.app) — \(previous.title)") }
+                if isRunning { log("yayın önceki kaynakta sürüyor") }
             }
             if !isRunning { await stop() }
             throw error
@@ -299,6 +356,7 @@ final class MirrorEngine {
         pipelineGeneration += 1
         statsTimer?.invalidate(); statsTimer = nil
         stopAppTap?(); stopAppTap = nil
+        tvTracker?.stop(); tvTracker = nil
         await capture?.stop()
         encoder?.drain(); encoder?.teardown()
         udp?.cancel()
@@ -335,13 +393,15 @@ final class MirrorEngine {
     }
 
     func stop() async {
-        guard isRunning || control != nil else { return }
+        guard isRunning || control != nil || tvDisplay != nil else { return }
         isRunning = false
         await teardownMedia()
+        tvDisplay?.release(); tvDisplay = nil
         try? await control?.stop()
         control?.disconnect()
         control = nil
         currentWindow = nil
+        currentSource = nil
         announce = nil
         log("yayın durduruldu, kaynaklar serbest bırakıldı")
     }

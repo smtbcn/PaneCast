@@ -55,6 +55,7 @@ func usage() -> Never {
       atvm-sender mirror --tv <ip> [--window <id> | --app <ad> | --title <parça>]
                          [--profile 1080p60|1080p30|720p60] [--duration 30]
                          [--pin 123456] [--media-port 7602] [--tcp-fallback]
+      atvm-sender mirror --tv <ip> --tv-display [--profile 1080p60] [--duration 30] [--pin 123456]   # Mac'te açılan ayrı TV ekranını yayınla
       atvm-sender switch-test --tv <ip> --windows <id1,id2> [--every 10] [--duration 40]   # yayını kesmeden pencere değişimi
       atvm-sender unpair --tv <ip>           # eşleşmeyi TV'de (doğrulanmış oturumla) ve bu Mac'te sil
 
@@ -199,6 +200,30 @@ case "mirror":
     let pinArg = flag("--pin")
 
     let sourceKind = flag("--source", "window")!
+
+    // TV ekranı modu: sanal ekranın tamamı MirrorEngine hattıyla yayınlanır (GUI ile aynı yol).
+    if args.contains("--tv-display") {
+        do { try await WindowCapture.ensurePermission(waitSeconds: num("--wait-permission", 120.0)) }
+        catch { die("\(error)") }
+        StopSignals.install()
+        let engine = MirrorEngine()
+        engine.onLog = { emit($0) }
+        engine.setHost(tvHost)
+        do {
+            if try await engine.connectAndHello(host: tvHost) == .needsPin {
+                guard let pin = pinArg else { die("TV PIN istiyor: --pin <kod>") }
+                try await engine.submitPin(pin)
+            }
+            try await engine.beginStream(source: .tvDisplay, profile: profile)
+            let deadline = Date().addingTimeInterval(duration)
+            while Date() < deadline && !StopSignals.requested { try? await Task.sleep(nanoseconds: 250_000_000) }
+        } catch {
+            await engine.stop()
+            die("\(error)")
+        }
+        await engine.stop()
+        exit(0)
+    }
 
     // 1) pencereyi çöz (sentetik kaynakta ekran kaydı izni gerekmez)
     if sourceKind != "synthetic" {

@@ -53,6 +53,13 @@ Son sürümü [GitHub Releases](../../releases) sayfasından alın:
 
 TV'de donanım H.264 çözücüsü gerekir (yazılım yedeği yoktur).
 
+## TV ekranı modu
+
+Uygulamada **TV ekranı (ayrı ekran)** seçilirse tek pencere yerine sanal bir ekranın tamamı yayınlanır. Mac'te "PaneCast TV" adında TV boyutunda (1920x1080) bir ekran açılır; oraya taşıdığın pencereler (tam ekran da olur) ve sesleri TV'de oynar. O ekrandan ayrılan uygulamaların sesi Mac'te yeniden açılır. Sanal ekran her zaman görünür olduğundan ana ekranda uygulama değiştirmek yayını artık dondurmaz (ana ekrandaki tam ekran pencere, başka uygulamaya geçince macOS tarafından gizlenir). CLI: `mirror --tv <ip> --tv-display`.
+
+- Sistem Ayarları → Masaüstü ve Dock → "Ekranların ayrı Space'leri var" açık kalmalı (varsayılan).
+- Mod, macOS'un özel (herkese açık olmayan) bir API'sine dayanır (CoreGraphics sanal ekranları). Gelecekteki bir macOS güncellemesi bunu bozabilir; bozulursa uygulama çökmez, modu bir iletiyle kapatır.
+
 ## Başarım
 
 Tek bir kurulumda ölçüldü: Ethernet'te Mac mini M4, 5 GHz Wi-Fi'da Android 11 TV.

@@ -36,6 +36,8 @@ enum CaptureError: Error, CustomStringConvertible {
 final class WindowCapture: NSObject, @unchecked Sendable {
     private var stream: SCStream?
     private let windowId: UInt32
+    /// Doluysa pencere yerine bu ekranın tamamı yakalanır (TV ekranı modu).
+    private let displayId: CGDirectDisplayID?
     private var targetWidth: Int
     private var targetHeight: Int
     private var config: SCStreamConfiguration?
@@ -75,11 +77,25 @@ final class WindowCapture: NSObject, @unchecked Sendable {
          onFrame: @escaping (CVPixelBuffer, CMTime) -> Void,
          onAudio: ((CMSampleBuffer) -> Void)? = nil) {
         self.windowId = windowId
+        self.displayId = nil
         self.targetWidth = width
         self.targetHeight = height
         self.fps = fps
         self.onFrame = onFrame
         self.onAudio = audio ? onAudio : nil
+        super.init()
+    }
+
+    /// Bir ekranın tamamını yakalar (pencere kimliği yok). Ses SCK'dan alınmaz: sahipleri tap'ten gelir.
+    init(displayId: CGDirectDisplayID, width: Int, height: Int, fps: Int,
+         onFrame: @escaping (CVPixelBuffer, CMTime) -> Void) {
+        self.windowId = 0
+        self.displayId = displayId
+        self.targetWidth = width
+        self.targetHeight = height
+        self.fps = fps
+        self.onFrame = onFrame
+        self.onAudio = nil
         super.init()
     }
 
@@ -164,9 +180,15 @@ final class WindowCapture: NSObject, @unchecked Sendable {
     private static var lastPermissionPromptShown = false
 
     func start() async throws {
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        guard let window = content.windows.first(where: { $0.windowID == windowId }) else {
-            throw CaptureError.windowNotFound(windowId)
+        let filter: SCContentFilter
+        if let displayId {
+            filter = SCContentFilter(display: try await TvDisplay.shareableDisplay(displayId), excludingWindows: [])
+        } else {
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            guard let window = content.windows.first(where: { $0.windowID == windowId }) else {
+                throw CaptureError.windowNotFound(windowId)
+            }
+            filter = SCContentFilter(desktopIndependentWindow: window)
         }
 
         let config = SCStreamConfiguration()
@@ -199,7 +221,6 @@ final class WindowCapture: NSObject, @unchecked Sendable {
 
         configuredSize = CGSize(width: config.width, height: config.height)
         self.config = config
-        let filter = SCContentFilter(desktopIndependentWindow: window)
         let s = SCStream(filter: filter, configuration: config, delegate: self)
         try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: DispatchQueue(label: "atvm.sck", qos: .userInteractive))
         if onAudio != nil {

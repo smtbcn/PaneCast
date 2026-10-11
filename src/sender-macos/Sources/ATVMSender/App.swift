@@ -22,6 +22,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private let manualIP = NSTextField(string: "")
     private let logView = NSTextView(frame: NSRect(x: 0, y: 0, width: 840, height: 168))
     private let windowHint = NSTextField(labelWithString: "")
+    private let modeControl = NSSegmentedControl(labels: ["Pencere", "TV ekranı (ayrı ekran)"],
+                                                 trackingMode: .selectOne, target: nil, action: nil)
+    private let tvModeNote = NSTextField(wrappingLabelWithString:
+        "Mac'te TV boyutunda bir ekran açılır; oraya taşıdığın pencereler ve sesleri TV'de oynar.\n\n"
+        + "Pencereyi \"PaneCast TV\" ekranına sürükle (tam ekran da olur). Sistem Ayarları → Masaüstü ve Dock → "
+        + "\"Ekranların ayrı Space'leri var\" açık kalmalı.")
+    /// Pencere listesi modunda görünen, TV ekranı modunda gizlenen görünümler.
+    private var windowModeViews: [NSView] = []
+    private var tvDisplayMode: Bool { modeControl.selectedSegment == 1 }
 
     private var TVs: [DiscoveredTV] = []
     private var windows: [WindowInfo] = []
@@ -112,16 +121,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         statusPill.backgroundColor = NSColor.tertiaryLabelColor
         content.addSubview(statusPill)
 
-        content.addSubview(section("Yayınlanacak pencere", x: 20, y: 588, w: 400))
+        modeControl.frame = NSRect(x: 140, y: 619, width: 340, height: 26)
+        modeControl.selectedSegment = 0
+        modeControl.target = self
+        modeControl.action = #selector(modeChanged)
+        content.addSubview(modeControl)
+
+        let windowSection = section("Yayınlanacak pencere", x: 20, y: 588, w: 400)
+        content.addSubview(windowSection)
         search.frame = NSRect(x: 20, y: 552, width: 424, height: 26)
         search.placeholderString = "uygulama veya pencere ara"
         search.delegate = self
         search.target = self
         search.action = #selector(filterChanged)
         content.addSubview(search)
-        content.addSubview(button("Yenile", x: 452, y: 550, w: 88) { [weak self] in
+        let refreshButton = button("Yenile", x: 452, y: 550, w: 88) { [weak self] in
             Task { await self?.refreshWindows(keepSelection: false) }
-        })
+        }
+        content.addSubview(refreshButton)
 
         configureTable(windowTable, column: Self.winColumn, width: 520)
         let windowScroll = NSScrollView(frame: NSRect(x: 20, y: 250, width: 520, height: 292))
@@ -129,6 +146,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         windowScroll.borderType = .bezelBorder
         windowScroll.documentView = windowTable
         content.addSubview(windowScroll)
+        windowModeViews = [windowSection, search, refreshButton, windowScroll]
+
+        tvModeNote.frame = NSRect(x: 20, y: 400, width: 520, height: 120)
+        tvModeNote.font = NSFont.systemFont(ofSize: 13)
+        tvModeNote.textColor = .secondaryLabelColor
+        tvModeNote.isHidden = true
+        content.addSubview(tvModeNote)
 
         content.addSubview(section("Hedef TV — ağdaki cihazlar · çift tıkla: PIN ile eşleştir", x: 560, y: 588, w: 320))
         configureTable(deviceTable, column: Self.devColumn, width: 300)
@@ -388,8 +412,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         }
     }
 
+    @objc private func modeChanged() {
+        let tv = tvDisplayMode
+        windowModeViews.forEach { $0.isHidden = tv }
+        tvModeNote.isHidden = !tv
+        windowHint.stringValue = tv ? "" : "Bir pencere seç; seçtiğin an yayına geçer."
+    }
+
     /// Yayın sırasında pencere değişti: akışı kesmeden yeni pencereye geç.
     private func windowSelectionChanged() async {
+        guard !tvDisplayMode else { return }
         let row = windowTable.selectedRow
         guard row >= 0, row < shown.count else { return }
         let win = shown[row]
@@ -426,17 +458,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             return
         }
         let row = windowTable.selectedRow
-        guard row >= 0, row < shown.count else {
+        guard tvDisplayMode || (row >= 0 && row < shown.count) else {
             setStatus("Pencere seçilmedi")
             windowHint.stringValue = "Soldaki listeden yayınlanacak pencereyi seç."
             log("reddedildi: pencere seçimi yok")
             return
         }
-        let win = shown[row]
+        let source: MirrorEngine.CastSource = tvDisplayMode ? .tvDisplay : .window(shown[row])
         let profile = H264Encoder.Profile.presets[["1080p60", "1080p30", "720p60"][profilePopup.indexOfSelectedItem]]!
         engine.setHost(host)
         refreshRunButton()
-        log("hedef: \(host) ← \(win.app) — \(win.title) · profil \(profile.width)x\(profile.height)@\(profile.fps)")
+        let what: String
+        if case .window(let win) = source { what = "\(win.app) — \(win.title)" } else { what = TvDisplay.name }
+        log("hedef: \(host) ← \(what) · profil \(profile.width)x\(profile.height)@\(profile.fps)")
         do {
             let hs = try await engine.connectAndHello(host: host)
             if hs == .needsPin {
@@ -444,7 +478,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                 try await engine.submitPin(pin)
             }
             if let name = selectedDevice()?.name { KeyStore.storeName(name, for: host) }
-            try await engine.beginStream(window: win, profile: profile)
+            try await engine.beginStream(source: source, profile: profile)
         } catch let e as ControlClient.ControlError {
             await engine.stop(); fail("Başlatılamadı", e.description)
         } catch let e as CaptureError {
@@ -460,18 +494,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private func startForTV(_ session: SenderServer.TvSession) async {
         guard !engine.isRunning else { log("yayın zaten sürüyor; yeni istek yok sayıldı"); return }
         let row = windowTable.selectedRow
-        guard row >= 0, row < shown.count else {
+        guard tvDisplayMode || (row >= 0 && row < shown.count) else {
             log("TV yayın istedi ama arayüzde pencere seçili değil — bir pencere seçmen yeterli")
             windowHint.stringValue = "TV yayın istedi: soldan bir pencere seç, akış hemen o pencereye geçer."
             session.reject("no_window_selected_on_sender")
             return
         }
-        let win = shown[row]
+        let source: MirrorEngine.CastSource = tvDisplayMode ? .tvDisplay : .window(shown[row])
         KeyStore.storeName(session.name, for: session.host)
         refreshRunButton()
         do {
             tvInitiatedHost = session.host
-            try await engine.beginForTv(window: win,
+            try await engine.beginForTv(source: source,
                                         profile: H264Encoder.Profile.presets["1080p60"]!,
                                         host: session.mediaHost, mediaPort: session.mediaPort) { info in
                 await self.advertised.announceStart(session, info)
@@ -589,7 +623,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
 
     private func refreshRunButton() {
         startStop.title = engine.isRunning ? "Durdur" : "Başlat"
-        setStatus(engine.isRunning ? "Yayında" : (engine.currentWindow == nil ? "Hazır" : "Hazır"))
+        setStatus(engine.isRunning ? "Yayında" : "Hazır")
+        modeControl.isEnabled = !engine.isRunning
         if !engine.isRunning { statsLabel.stringValue = "" }
     }
 

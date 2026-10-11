@@ -28,6 +28,12 @@ struct AudioProcessRow: Equatable {
     let bundleID: String
 }
 
+/// Sesi toplanacak bir uygulama: ana pid + (biliniyorsa) bundle id.
+struct AudioRoot: Equatable {
+    let pid: pid_t
+    let bundleID: String?
+}
+
 enum AudioProcessResolver {
     /// Tüm WebKit uygulamalarının paylaştığı GPU servisi: bundle id ile seçilemez.
     static let sharedWebKitGPU = "com.apple.WebKit.GPU"
@@ -37,21 +43,36 @@ enum AudioProcessResolver {
     /// (WebKit.GPU hariç). Kendi sürecimiz her zaman dışarıda.
     static func resolve(appPid: pid_t, appBundleID: String?, ownPid: pid_t,
                         rows: [AudioProcessRow]) -> [AudioProcessRow] {
+        resolve(roots: [AudioRoot(pid: appPid, bundleID: appBundleID)], ownPid: ownPid, rows: rows)
+    }
+
+    /// Birden çok kök uygulamanın ses süreçlerinin birleşimi (TV ekranı modu); her satır bir kez döner.
+    static func resolve(roots: [AudioRoot], ownPid: pid_t, rows: [AudioProcessRow]) -> [AudioProcessRow] {
         rows.filter { row in
             guard row.pid > 0, row.pid != ownPid else { return false }
-            if row.pid == appPid { return true }
-            if let responsible = row.responsiblePid { return responsible == appPid }
-            if row.ppid == appPid { return true }
-            return bundleMatches(row.bundleID, appBundleID: appBundleID)
+            return roots.contains { belongs(row, to: $0) }
         }
+    }
+
+    private static func belongs(_ row: AudioProcessRow, to root: AudioRoot) -> Bool {
+        if row.pid == root.pid { return true }
+        if let responsible = row.responsiblePid { return responsible == root.pid }
+        if row.ppid == root.pid { return true }
+        return bundleMatches(row.bundleID, appBundleID: root.bundleID)
     }
 
     /// macOS 26 `bundleIDs` listesi: uygulamanın kendi kimliği ile çözülen süreçlerden
     /// onunla başlayanlar. Çözülmemiş süreçlerin kimliği alınmaz (ör. Chrome Canary).
     static func bundleIDs(resolved: [AudioProcessRow], appBundleID: String?) -> [String] {
-        guard let app = appBundleID, !app.isEmpty else { return [] }
-        var ids: Set<String> = [app]
-        for row in resolved where bundleMatches(row.bundleID, appBundleID: app) { ids.insert(row.bundleID) }
+        bundleIDs(resolved: resolved, appBundleIDs: [appBundleID])
+    }
+
+    static func bundleIDs(resolved: [AudioProcessRow], appBundleIDs: [String?]) -> [String] {
+        var ids: Set<String> = []
+        for case let app? in appBundleIDs where !app.isEmpty {
+            ids.insert(app)
+            for row in resolved where bundleMatches(row.bundleID, appBundleID: app) { ids.insert(row.bundleID) }
+        }
         return ids.sorted()
     }
 
@@ -173,8 +194,9 @@ final class AppAudioTap: @unchecked Sendable {
         init(id: Int, objects: Set<UInt32>) { self.id = id; self.objects = objects }
     }
 
-    private let pid: pid_t
-    private let appBundleID: String?
+    /// Kök uygulamalar; her kurulumda yeniden sorulur (TV ekranı modunda küme zamanla değişir).
+    private let roots: () -> [AudioRoot]
+    private let pollInterval: TimeInterval?
     private let muteLocally: Bool
     private let onFrames: (Frames) -> Void
     private let log: (String) -> Void
@@ -196,12 +218,21 @@ final class AppAudioTap: @unchecked Sendable {
     private var stopped = false
     private var listener: AudioObjectPropertyListenerBlock?
     private var pendingRebuild: DispatchWorkItem?
+    private var pollWork: DispatchWorkItem?
     private var swaps = 0
 
-    init(pid: pid_t, muteLocally: Bool,
+    convenience init(pid: pid_t, muteLocally: Bool,
+                     onFrames: @escaping (Frames) -> Void, log: @escaping (String) -> Void) {
+        let root = AudioRoot(pid: pid, bundleID: NSRunningApplication(processIdentifier: pid)?.bundleIdentifier)
+        self.init(roots: { [root] }, pollInterval: nil, muteLocally: muteLocally, onFrames: onFrames, log: log)
+    }
+
+    /// `pollInterval` verilirse kök kümesi o aralıkla yeniden değerlendirilir
+    /// (süreç listesi olayları yalnız yeni SES SÜRECİ doğunca gelir; pencere taşınınca gelmez).
+    init(roots: @escaping () -> [AudioRoot], pollInterval: TimeInterval?, muteLocally: Bool,
          onFrames: @escaping (Frames) -> Void, log: @escaping (String) -> Void) {
-        self.pid = pid
-        self.appBundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
+        self.roots = roots
+        self.pollInterval = pollInterval
         self.muteLocally = muteLocally
         self.onFrames = onFrames
         self.log = log
@@ -222,6 +253,7 @@ final class AppAudioTap: @unchecked Sendable {
             current = gen
             log("uygulama sesi tap'i açıldı: \(describe(rows)) · \(muteLocally ? "Mac'te yalnız bu süreçler susturuldu" : "susturma kapalı")")
             installListener()
+            schedulePoll()
         }
     }
 
@@ -231,6 +263,7 @@ final class AppAudioTap: @unchecked Sendable {
             guard !stopped else { return }
             stopped = true
             pendingRebuild?.cancel(); pendingRebuild = nil
+            pollWork?.cancel(); pollWork = nil
             if let listener {
                 var addr = AudioProcessList.address(kAudioHardwarePropertyProcessObjectList)
                 AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &addr, queue, listener)
@@ -247,12 +280,11 @@ final class AppAudioTap: @unchecked Sendable {
     // MARK: kurulum
 
     private func resolved() -> [AudioProcessRow] {
-        AudioProcessResolver.resolve(appPid: pid, appBundleID: appBundleID, ownPid: getpid(),
-                                     rows: AudioProcessList.rows())
+        AudioProcessResolver.resolve(roots: roots(), ownPid: getpid(), rows: AudioProcessList.rows())
     }
 
     private func describe(_ rows: [AudioProcessRow]) -> String {
-        guard !rows.isEmpty else { return "ses süreci henüz yok (uygulama \(pid), ses başlayınca eklenecek)" }
+        guard !rows.isEmpty else { return "ses süreci henüz yok (kök uygulamalar \(roots().map { $0.pid }), ses başlayınca eklenecek)" }
         let parts = rows.map { r in
             "pid \(r.pid) \(r.bundleID.isEmpty ? "?" : r.bundleID) sorumlu=\(r.responsiblePid.map(String.init) ?? "?")"
         }
@@ -272,7 +304,7 @@ final class AppAudioTap: @unchecked Sendable {
         #if compiler(>=6.2)
         if #available(macOS 26.0, *) {
             // Sonradan açılan süreçleri sistem kendisi ekler (kendi dinleyicimiz yine yedekte).
-            let ids = AudioProcessResolver.bundleIDs(resolved: rows, appBundleID: appBundleID)
+            let ids = AudioProcessResolver.bundleIDs(resolved: rows, appBundleIDs: roots().map { $0.bundleID })
             if !ids.isEmpty {
                 desc.bundleIDs = ids
                 desc.isProcessRestoreEnabled = true
@@ -354,6 +386,17 @@ final class AppAudioTap: @unchecked Sendable {
         let work = DispatchWorkItem { [weak self] in self?.rebuildIfChanged() }
         pendingRebuild = work
         queue.asyncAfter(deadline: .now() + 0.2, execute: work)
+    }
+
+    private func schedulePoll() {
+        guard let pollInterval, !stopped else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, !self.stopped else { return }
+            self.rebuildIfChanged()
+            self.schedulePoll()
+        }
+        pollWork = work
+        queue.asyncAfter(deadline: .now() + pollInterval, execute: work)
     }
 
     /// Yeni tap ÖNCE kurulur, eskisi yeni veri verdikten sonra yıkılır: susturma hiç kesilmez.
@@ -459,11 +502,23 @@ final class AppAudioTap: @unchecked Sendable {
 enum AppAudioSource {
     static func start(pid: pid_t, muteLocally: Bool, packetizer: PcmAudioPacketizer,
                       send: @escaping (Data) -> Void, log: @escaping (String) -> Void) -> (() -> Void)? {
-        guard #available(macOS 14.2, *), pid > 0 else {
-            log("süreç tap'i kullanılamıyor (macOS 14.2 öncesi ya da pencere sahibi bilinmiyor) — ScreenCaptureKit sesi; Mac'te yerel susturma YOK")
+        guard pid > 0 else {
+            log("süreç tap'i kullanılamıyor (pencere sahibi bilinmiyor) — ScreenCaptureKit sesi; Mac'te yerel susturma YOK")
             return nil
         }
-        let tap = AppAudioTap(pid: pid, muteLocally: muteLocally, onFrames: { [packetizer] f in
+        let root = AudioRoot(pid: pid, bundleID: NSRunningApplication(processIdentifier: pid)?.bundleIdentifier)
+        return start(roots: { [root] }, pollInterval: nil, muteLocally: muteLocally, packetizer: packetizer, send: send, log: log)
+    }
+
+    /// Kök kümesi çalışırken değişebilen kaynak (TV ekranı modu): ekranda olan uygulamaların birleşimi.
+    static func start(roots: @escaping () -> [AudioRoot], pollInterval: TimeInterval?, muteLocally: Bool,
+                      packetizer: PcmAudioPacketizer,
+                      send: @escaping (Data) -> Void, log: @escaping (String) -> Void) -> (() -> Void)? {
+        guard #available(macOS 14.2, *) else {
+            log("süreç tap'i kullanılamıyor (macOS 14.2 öncesi) — ScreenCaptureKit sesi; Mac'te yerel susturma YOK")
+            return nil
+        }
+        let tap = AppAudioTap(roots: roots, pollInterval: pollInterval, muteLocally: muteLocally, onFrames: { [packetizer] f in
             for packet in packetizer.packets(interleaved: f.samples, frames: f.frameCount,
                                              channels: f.channels, hostSeconds: f.hostSeconds) {
                 send(packet)
