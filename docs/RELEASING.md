@@ -98,29 +98,58 @@ warning (it never falls back to the debug key) and `scripts/release-android.sh` 
 
 ## Google Play (Android TV)
 
-The AAB is `artifacts/play/PaneCast-Receiver-X.Y.Z.aab`. Notes:
+The AAB is `artifacts/play/PaneCast-Receiver-X.Y.Z.aab` and is never attached to a GitHub release: the
+GitHub APK and the Play APK are signed with different certificates (see below).
 
-- Play for TV needs the AAB, a **leanback launcher activity** and the `android.software.leanback`
-  feature (both declared in the manifest), a TV banner (`banner.png`, present) and TV screenshots.
-- Enrol in **Play App Signing**. You upload with the upload key; Google re-signs the APKs it serves with
-  its own app-signing key.
+### One-time Console setup
+
+1. **Create the app** in Play Console for package `app.panecast.receiver` (default language, title,
+   free, app, target audience). The package name never changes afterwards.
+2. **Play App Signing:** keep the Google-generated app-signing key. Our own keystore stays the *upload*
+   key only, so a leaked repository-adjacent key cannot produce Play-signed installs.
+3. **Service account for the API:** Google Cloud → IAM → service account → JSON key → save as
+   `secrets/play-service-account.json` (gitignored, never committed). Then invite that e-mail address in
+   Play Console → Users and access permissions with "App releases: manage releases and testing tracks".
+4. **App content:** privacy policy URL, content rating questionnaire, Data safety form (PaneCast collects
+   nothing: no account, no cloud, no telemetry), ads = none. The policy text is `docs/PRIVACY.md`, served
+   by this repository's GitHub Pages site.
+5. **Testing tracks:** a closed-testing tester list cannot be created through the API; add your own e-mail
+   in Console → Testing → Closed testing first.
+
+### Uploading
+
+```bash
+./scripts/release-all.sh                                   # rebuilds the AAB
+./scripts/release-play.sh --selftest                       # offline proof of the JWT signing chain
+PLAY_TRACK=closed ./scripts/release-play.sh                # upload → track → validate, nothing released
+PLAY_TRACK=closed PLAY_COMMIT=1 ./scripts/release-play.sh  # the approved step: commit the release
+```
+
+The script prints the local SHA-256 of the AAB and compares it with the digest Play reports back after
+the upload, so a truncated or wrong build is caught before anything is published. Tokens and keys are
+never printed. If `validate` fails, the edit is rolled back and Play's own message names the missing
+Console answer.
+
+### Notes that matter
+
+- Play for TV needs the AAB, a **leanback launcher activity** and the `android.software.leanback` feature
+  (both declared in the manifest). A 1280x720 store banner and TV screenshots are required for a
+  production listing; testing tracks can be released without store graphics.
 - **Target API level:** the receiver declares `targetSdk = 34` (raised for the Android TV Play minimum in
-  0.2.0). Verify the current Play requirement before each upload; raising it further (35+) means re-testing
-  on a real TV, because the receiver only runs on API 30 hardware. This does not affect GitHub APKs.
-- Play also needs a privacy policy URL and a Data safety form (PaneCast collects nothing; it has no
-  account, cloud or telemetry).
+  0.2.0). Re-check the current Play rule before each upload; going to 35+ means re-testing on a real TV,
+  because the receiver hardware here runs API 30. GitHub APKs are unaffected.
+- `versionCode` is derived from `VERSION` (`major*10000 + minor*100 + patch`), so 0.2.0 is 200. It must
+  strictly increase with every Play upload.
 
 ### GitHub APK vs Play build: signing keys differ
 
-- The GitHub APK is signed with your **upload key** (keystore above).
-- The APK a user gets from Play is signed with the **Play app-signing key**.
-- Android refuses to update an app when the signing certificate differs, so a user cannot update
-  across the two channels: they must uninstall first, which also clears the stored pairing. Tell users
-  to pick one channel.
-- To make both channels share one key, Play lets you upload an existing signing key during
-  App Signing enrolment (see the Play Console documentation for the current procedure). Decide this
-  **before** the first Play upload, because the choice is made at enrolment.
-- Keep the `applicationId` (`app.panecast.receiver`) identical on both channels.
+- The GitHub APK is signed with our release keystore; the APK Play serves is signed with the
+  Google-generated app-signing key.
+- Android refuses to update an app whose signing certificate differs, so nobody can move between the two
+  channels by updating: uninstall first, which also clears the stored pairing. Say so in the listing.
+- Uploading our keystore as the Play app-signing key would unify both channels, but it puts a
+  repository-adjacent key into the Play signing path; that trade-off was rejected for this app.
+
 
 ## Not covered
 
