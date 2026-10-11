@@ -35,7 +35,10 @@ android {
     defaultConfig {
         applicationId = "app.panecast.receiver"
         minSdk = 26
-        targetSdk = 30
+        // 34 = Google Play's minimum target for Android TV apps since 2026-08-31.
+        // Staying below 35 avoids the edge-to-edge and large-screen orientation
+        // behaviour changes, which cannot be tested on the API 30 reference TV.
+        targetSdk = 34
         versionCode = versionParts[0] * 10000 + versionParts[1] * 100 + versionParts[2]
         versionName = appVersion
     }
