@@ -236,6 +236,14 @@ final class WindowCapture: NSObject, @unchecked Sendable {
         self.stream = nil
     }
 
+    /// Aynı kaynakla yakalamayı taze kurar: `start()` SCShareableContent'i yeniden sorup
+    /// yeni bir filtre kurar, böylece yüzey yeniden besteleniyorsa akış döner.
+    /// Kare sayaçları sıfırlanmaz — donma tespiti onların monoton artmasına dayanıyor.
+    func restart() async throws {
+        await stop()
+        try await start()
+    }
+
     /// Akış kapanmadan çıktı boyutunu değiştirir (pencere yeniden boyutlandı).
     func resize(width: Int, height: Int) async throws {
         guard let stream, let config else { return }

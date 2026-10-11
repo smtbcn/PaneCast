@@ -21,6 +21,8 @@ final class MirrorEngine {
     var onLog: ((String) -> Void)?
     /// Arayüzün durum şeridi için yapılandırılmış sayılar (log metni ayrıştırılmaz).
     var onStats: ((Stats) -> Void)?
+    /// Yakalama sessizce durduğunda arayüzün tek satırlık uyarısı; nil = temizle.
+    var onStatusNote: ((String?) -> Void)?
     struct Stats {
         let seconds: Double
         let fps: Double
@@ -49,6 +51,10 @@ final class MirrorEngine {
     private var statsTimer: Timer?
     private var startedAt = Date()
     private var frameCount = 0
+    /// Kare akışının sessiz durmasını izler; her oturumda sıfırlanır.
+    private var stall = StallGuard()
+    /// "Vazgeçtik" uyarısı tek sefer loglansın diye.
+    private var stallGaveUp = false
 
     func log(_ line: String) { onLog?(line) }
 
@@ -230,6 +236,9 @@ final class MirrorEngine {
         self.isRunning = true
         self.startedAt = Date()
         self.frameCount = 0
+        self.stall = StallGuard()
+        self.stallGaveUp = false
+        self.onStatusNote?(nil)
         self.currentWindow = window
         self.baseProfile = profile
         self.currentProfile = p
@@ -378,6 +387,7 @@ final class MirrorEngine {
     private func emitStats() {
         guard let capture, let encoder, let packetizer else { return }
         frameCount = capture.framesDelivered
+        watchForStall(now: Date())
         let secs = max(0.001, Date().timeIntervalSince(startedAt))
         let mbps = Double(encoder.bytesEncoded) * 8 / secs / 1_000_000
         let lat = encoder.latencyPercentiles()
@@ -403,6 +413,49 @@ final class MirrorEngine {
         currentWindow = nil
         currentSource = nil
         announce = nil
+        onStatusNote?(nil)
         log("yayın durduruldu, kaynaklar serbest bırakıldı")
+    }
+
+    /// Kare sayacı durduysa: bir kez yeniden kur, olmazsa kullanıcıya görünür gerekçe söyle.
+    /// Sessiz donmanın ölçülen nedeni: ayrı Space'e taşınan tam ekran pencereyi SCK hata vermeden
+    /// beslemeyi kesiyor; `didStopWithError` bu durumda gelmiyor.
+    private func watchForStall(now: Date) {
+        guard isRunning, let ev = stall.observe(frameCount, now: now) else { return }
+        switch ev {
+        case .resumed:
+            if stallGaveUp { log("kaynak yeniden kare üretiyor") }
+            stallGaveUp = false
+            onStatusNote?(nil)
+        case .retry:
+            log(String(format: "kaynak %.0f sn kare üretmedi → yakalama yeniden kuruluyor",
+                       StallGuard.quietLimit))
+            onStatusNote?("Kaynak kare üretmiyor — yeniden deneniyor")
+            Task { @MainActor [weak self] in await self?.restartCapture() }
+        case .stalled:
+            guard !stallGaveUp else { return }
+            stallGaveUp = true
+            let why: String
+            if case .tvDisplay = currentSource {
+                why = "TV ekranı kare üretmiyor — sanal ekran bozulmuş olabilir, yayını durdurup yeniden başlat"
+            } else {
+                why = "Pencere kare üretmiyor (ayrı Space'te tam ekran olabilir) — TV ekranı modunu kullan"
+            }
+            log("yakalama takıldı: \(why)")
+            onStatusNote?(why)
+        }
+    }
+
+    /// Donmuş kaynağa tek şans. Kurulamazsa hattı açık tutmanın anlamı yok: temiz durdur.
+    private func restartCapture() async {
+        guard isRunning, let cap = capture else { return }
+        do {
+            try await cap.restart()
+            log("yakalama yeniden kuruldu")
+        } catch {
+            log("yakalama yeniden kurulamadı (\(error)) → yayın durduruluyor")
+            onStatusNote?("Kaynak yeniden yakalanamadı — yayın durduruldu")
+            await stop()
+        }
     }
 }

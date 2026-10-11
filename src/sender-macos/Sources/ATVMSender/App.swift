@@ -40,6 +40,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private var switching = false
     /// Yayın TV'den başlatıldıysa TV'nin host'u: Mac durdurunca aynı bağlantıdan bildirilir.
     private var tvInitiatedHost: String?
+    /// Yakalama takıldığında durum şeridindeki tek satır; nil = normal durum adı.
+    private var streamNotice: String?
 
     private static let winColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("win"))
     private static let devColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("dev"))
@@ -77,6 +79,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         if let note = KeyStore.prepare() { append(note) }
 
         engine.onStats = { [weak self] s in self?.render(s) }
+        // Donma uyarısı düğmeyi de tazeler: motor kendi kendine durursa etiket eskisi gibi kalmıyor.
+        engine.onStatusNote = { [weak self] note in
+            Task { @MainActor in self?.streamNotice = note; self?.refreshRunButton() }
+        }
 
         // TV uygulaması açıkken liste kendiliğinden dolsun; yeni pencereler de görünsün.
         discoveryTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in
@@ -479,6 +485,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             }
             if let name = selectedDevice()?.name { KeyStore.storeName(name, for: host) }
             try await engine.beginStream(source: source, profile: profile)
+            // Başarı yolunda düğmeyi ve durumu yenile: aksine "Başlat" yazılı kalıyor.
+            streamNotice = nil
+            refreshRunButton()
         } catch let e as ControlClient.ControlError {
             await engine.stop(); fail("Başlatılamadı", e.description)
         } catch let e as CaptureError {
@@ -621,17 +630,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             ? "Aramana uygun pencere yok — arama kutusunu temizle." : windowHint.stringValue
     }
 
+    /// Düğme etiketi her durum değişiminde yenilenir. Ölçülen kusur: Mac'ten başlatılan yayında
+    /// `run()` başarı yolunda bu fonksiyon hiç çağrılmıyordu, düğme "Başlat" yazmaya devam edip
+    /// basınca yayını durduruyordu (TV'den başlatılan akışta `startForTV` çağırdığı için görülmedi).
     private func refreshRunButton() {
         startStop.title = engine.isRunning ? "Durdur" : "Başlat"
-        setStatus(engine.isRunning ? "Yayında" : "Hazır")
+        if !engine.isRunning { streamNotice = nil; statsLabel.stringValue = "" }
+        setStatus(streamNotice ?? (engine.isRunning ? "Yayında" : "Hazır"))
         modeControl.isEnabled = !engine.isRunning
-        if !engine.isRunning { statsLabel.stringValue = "" }
     }
 
     private func render(_ s: MirrorEngine.Stats) {
         statsLabel.stringValue = String(format: "%.0f fps · %.1f Mbps · RTP %d · ses %d · kodlama %.1f ms",
                                         s.fps, s.mbps, s.packets, s.audioPackets, s.encodeP50)
-        setStatus("Yayında")
+        setStatus(streamNotice ?? "Yayında")
     }
 
     private func setStatus(_ text: String) {
