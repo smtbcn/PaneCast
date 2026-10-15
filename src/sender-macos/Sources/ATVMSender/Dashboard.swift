@@ -221,6 +221,10 @@ final class MetricTile: NSView {
         spark.lineColor = color
     }
 
+    /// Yalnız sayı rengini nötrle; grafiğin kendi rengi kalıcıdır (ölçülen kusur:
+    /// yayın durdurulunca tüm çizgiler griye dönüyordu ve grafikler anlamsızlaşıyordu).
+    func resetValueColor() { valueLabel.textColor = .labelColor }
+
     /// Grafik örneği ekle (kutunun grafiği varsa).
     func push(_ v: Double) { spark.push(v) }
     func resetChart() { spark.reset() }
@@ -283,6 +287,12 @@ final class DashboardView: NSView {
         addSubview(chips)
 
         tiles = [tileFps, tileBitrate, tileLatency, tilePackets, tileHealth]
+        // Çizgi rengi kutunun kimliğidir: mavi ölçü, yeşil akış, turuncu gecikme.
+        tileFps.spark.lineColor = .systemBlue
+        tileBitrate.spark.lineColor = .systemGreen
+        tileLatency.spark.lineColor = .systemOrange
+        tilePackets.spark.lineColor = .systemBlue
+        tileHealth.spark.lineColor = .systemGreen
         tiles.forEach { addSubview($0) }
 
         summaryBar.wantsLayer = true
@@ -368,7 +378,7 @@ final class DashboardView: NSView {
     func clearStats() {
         [tileFps, tileBitrate, tileLatency, tilePackets, tileHealth].forEach {
             $0.set("—", unit: "", detail: "yayın yok")
-            $0.tint(.labelColor)
+            $0.resetValueColor()
         }
         tileFps.resetChart(); tileBitrate.resetChart(); tileLatency.resetChart()
     }
