@@ -12,7 +12,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private let engine = MirrorEngine()
     private let advertised = SenderServer()
 
-    private let statusPill = NSTextField(labelWithString: "Hazır")
+    /// Durum rozetinin kapsayıcısı: arka plan + köşe yuvarlaklığı burada, yazı alt etikette.
+    /// Ölçülen kusur: rozet tek başına NSTextField idi, 24 px yükseklikte metin dikey olarak
+    /// tam ortalanmıyordu (NSTextField yüksek çerçevede içeriği üst/köşe hizalar).
+    private let statusPill = NSView()
+    private let statusText = NSTextField(labelWithString: "Hazır")
     private let windowTable = NSTableView()
     private let deviceTable = NSTableView()
     private let search = NSSearchField()
@@ -129,13 +133,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         title.frame = NSRect(x: 20, y: 620, width: 300, height: 26)
         content.addSubview(title)
 
-        statusPill.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         statusPill.frame = NSRect(x: 700, y: 622, width: 180, height: 24)
-        statusPill.alignment = .center
         statusPill.wantsLayer = true
         statusPill.layer?.cornerRadius = 12
-        statusPill.drawsBackground = true
-        statusPill.backgroundColor = NSColor.tertiaryLabelColor
+        statusText.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        statusText.textColor = .white
+        statusText.alignment = .center
+        statusText.translatesAutoresizingMaskIntoConstraints = false
+        statusPill.addSubview(statusText)
+        // centerY anchörü: metin rozetin içine tam ortalanır (çerçeve yüksekliğinden bağımsız).
+        NSLayoutConstraint.activate([
+            statusText.centerXAnchor.constraint(equalTo: statusPill.centerXAnchor),
+            statusText.centerYAnchor.constraint(equalTo: statusPill.centerYAnchor),
+            statusText.leadingAnchor.constraint(greaterThanOrEqualTo: statusPill.leadingAnchor, constant: 8),
+            statusText.trailingAnchor.constraint(lessThanOrEqualTo: statusPill.trailingAnchor, constant: -8),
+        ])
         content.addSubview(statusPill)
 
         modeControl.frame = NSRect(x: 140, y: 619, width: 340, height: 26)
@@ -219,12 +231,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
 
 
         startStop.frame = NSRect(x: 236, y: 202, width: 304, height: 38)
-        startStop.title = "Başlat"
-        startStop.bezelStyle = .rounded
+        // Bezel yerine kendi zemin rengimiz: durum renk olarak anında okunsun (yeşil/kırmızı).
+        startStop.isBordered = false
+        startStop.bezelStyle = .regularSquare
+        startStop.wantsLayer = true
+        startStop.layer?.cornerRadius = 8
         startStop.keyEquivalent = "\r"
         startStop.target = self
         startStop.action = #selector(toggleRun)
         content.addSubview(startStop)
+        setRunTitle("Başlat")
 
         statsLabel.frame = NSRect(x: 560, y: 208, width: 320, height: 26)
         statsLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
@@ -732,10 +748,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     /// `run()` başarı yolunda bu fonksiyon hiç çağrılmıyordu, düğme "Başlat" yazmaya devam edip
     /// basınca yayını durduruyordu (TV'den başlatılan akışta `startForTV` çağırdığı için görülmedi).
     private func refreshRunButton() {
-        startStop.title = engine.isRunning ? "Durdur" : "Başlat"
+        setRunTitle(engine.isRunning ? "Durdur" : "Başlat")
         if !engine.isRunning { streamNotice = nil; statsLabel.stringValue = "" }
         setStatus(streamNotice ?? (engine.isRunning ? "Yayında" : "Hazır"))
         modeControl.isEnabled = !engine.isRunning
+    }
+
+    /// Düğmenin etiketi ve zemini tek yerden: yayın YOKKEN yeşil "Başlat", VARken kırmızı "Durdur".
+    /// Zeminsiz (isBordered=false) düğmede başlık rengi varsayılan koyu kalabildiği için beyaz
+    /// ve ortalanmış bir atfedilmiş başlık kullanılır.
+    private func setRunTitle(_ text: String) {
+        let style = NSMutableParagraphStyle()
+        style.alignment = .center
+        startStop.attributedTitle = NSAttributedString(string: text, attributes: [
+            .foregroundColor: NSColor.white,
+            .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
+            .paragraphStyle: style,
+        ])
+        startStop.layer?.backgroundColor = (engine.isRunning ? NSColor.systemRed : NSColor.systemGreen).cgColor
     }
 
     /// Ekran dizilimini canlı yazar: sanal ekran açıldıkça konumu değişebiliyor.
@@ -751,11 +781,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         setStatus(streamNotice ?? "Yayında")
     }
 
+    /// Rozet rengi **yayın durumundan** gelir, metinden değil: metin geçici uyarıları da
+    /// gösterebildiği için ("Akış takıldı" gibi) renk yalan söylemesin — yeşil = yayında,
+    /// kırmızı = yayında değil.
     private func setStatus(_ text: String) {
-        statusPill.stringValue = text
-        statusPill.backgroundColor = text == "Yayında"
-            ? NSColor.controlAccentColor
-            : NSColor.tertiaryLabelColor
+        statusText.stringValue = text
+        statusPill.layer?.backgroundColor = (engine.isRunning ? NSColor.systemGreen : NSColor.systemRed).cgColor
     }
 
     /// Ekran Kaydı iznini bekler ve verildiği anda listeyi tazeler.
