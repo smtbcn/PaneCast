@@ -49,6 +49,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private var tvInitiatedHost: String?
     /// Yakalama takıldığında durum şeridindeki tek satır; nil = normal durum adı.
     private var streamNotice: String?
+    /// "TV eşleşmiş diyor, Mac'te anahtar yok" uyarısı her adres için yalnız bir kez yazılır.
+    private var orphanWarnings: Set<String> = []
 
     private static let winColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("win"))
     private static let devColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("dev"))
@@ -392,10 +394,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     /// Yalnızca eşleşme: kontrol kanalı kurulur, TV PIN isterse sorulur, yayın başlatılmaz.
     private func pairDevice(row: Int) async {
         let tv = TVs[row]
-        guard tv.online, !tv.host.isEmpty else {
+        guard !tv.host.isEmpty else {
+            // Yayın alınıyor ama adres yok: Mac bu TV'yle hiç eşleşmedi ve ağ yoklaması da
+            // yanıt vermedi. Eski mesaj ("TV'nin uygulamasını aç") yanıltıcıydı: uygulama açıktı.
+            setStatus("TV adresi bilinmiyor")
+            windowHint.stringValue = tv.online
+                ? "TV yayında ama adresi elimizde değil: TV'yi bul / yeniden tara'ya bas; yine de gelmezse adresi kutuya yazıp Ekle'ye bas."
+                : "Bu TV kapalı görünüyor; TV'de uygulamayı aç ve yeniden tara."
+            log("eşleşme reddi: \(tv.displayName) adresi bilinmiyor (yayın: \(tv.online ? "var" : "yok"))")
+            return
+        }
+        guard tv.online else {
             setStatus("TV kapalı")
             windowHint.stringValue = "Bu TV'nin uygulamasını aç; sonra yeniden tara."
-            log("eşleşme reddi: \(tv.displayName) kapalı/adressiz")
+            log("eşleşme reddi: \(tv.displayName) kapalı")
             return
         }
         engine.setHost(tv.host)
@@ -611,6 +623,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             log("keşif: ağda alıcı yayını yok — TV'de uygulamayı açık tut ya da TV'den bu bilgisayarı seç")
         } else {
             log("keşif: \(found.count) TV bulundu (\(paired) eşleşmiş)")
+        }
+        // TV kendi eşleşmesini hatırlıyor ama Mac'te anahtarı yok: tipik neden TV'nin adresinin
+        // değişmesidir, anahtar eski adreste kalır. Yayın 20 sn'de bir tekrarlandığı için uyarı
+        // başına bir kez yazılır.
+        for tv in found where tv.tvReportsPaired && !KeyStore.isPaired(tv.host)
+            && !orphanWarnings.contains(tv.host) {
+            orphanWarnings.insert(tv.host)
+            log("eşleşme uyuşmuyor: \(tv.displayName) TV'de eşleşmiş görünüyor ama bu Mac'te anahtarı yok — satıra çift tıkla, PIN'i yeniden gir")
         }
         refreshRunButton()
     }
@@ -850,6 +870,11 @@ final class DeviceCell: NSTableCellView {
             secondary.stringValue = "\(tv.host):\(tv.controlPort) · eşleşmiş · "
                 + (tv.online ? "açık" : "TV'de uygulama kapalı")
             renk = tv.online ? .systemGreen : .secondaryLabelColor
+        } else if tv.tvReportsPaired {
+            // TV kendi tarafında eşleşmiş sayıyor (anahtar onun da üzerinde); Mac'te yoksa
+            // akış sessizce PIN turuna düşer — nedeni satırda yazılı durur.
+            secondary.stringValue = "\(tv.host):\(tv.controlPort) · TV eşleşmiş sayıyor, bu Mac'te anahtar yok · çift tıkla: PIN"
+            renk = .systemOrange
         } else {
             secondary.stringValue = "\(tv.host):\(tv.controlPort) · EŞLEŞMEMİŞ · "
                 + (tv.online ? "açık — çift tıkla: PIN gir" : "kapalı")

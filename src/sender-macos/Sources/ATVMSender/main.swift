@@ -49,6 +49,7 @@ func usage() -> Never {
 
       atvm-sender gui                        # arayüzü aç (çift tıklamayla da açılır)
       atvm-sender list-tvs
+      atvm-sender list-pairs                     # eşleşme defteri (anahtar değerleri yazdırılmaz)
       atvm-sender list-windows [--app SÜZGEÇ]
       atvm-sender selftest [--profile 1080p60] [--frames 300]
       atvm-sender audio-tap-test --pid <süreç> [--seconds 3] [--wav yol]   # uygulama sesi tap'i, TV'siz
@@ -96,6 +97,16 @@ case "list-tvs":
     let tvs = await TvDiscovery.browse(seconds: Double(num("--seconds", 3)))
     if tvs.isEmpty { print("yerel ağda PaneCast alıcısı bulunamadı (TV'de uygulamayı açın)") }
     for t in tvs { print(t) }
+    exit(0)
+
+case "list-pairs":
+    // Eşleşme defterinin dökümü: adres değerleri ASLA yazdırılmaz. Adres değişince hangi
+    // kaydın canlı olduğu arayüzü açmadan görülebilsin (açılış crash'i buradan teşhis edildi).
+    let names = KeyStore.names()
+    if names.isEmpty { print("bu Mac'te eşleşme adı kaydı yok")}
+    for host in names.keys.sorted() {
+        print("\(host)  anahtar: \(KeyStore.isPaired(host) ? "var" : "yok")  ad: \(names[host] ?? "")")
+    }
     exit(0)
 
 case "audio-tap-test":

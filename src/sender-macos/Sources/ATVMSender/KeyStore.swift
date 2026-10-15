@@ -69,6 +69,14 @@ enum KeyStore {
         writeNames(d)
     }
 
+    /// Yalnız gösterim adını düşürür; Anahtar Zinciri'ne dokunmaz. Adresi taşımış ve eşleşmesi
+    /// olmayan eskimiş satırlar listeyi kirletmesin diye `TvDiscovery` tarafından çağrılır.
+    static func dropName(_ host: String) {
+        var d = names()
+        guard d.removeValue(forKey: host) != nil else { return }
+        writeNames(d)
+    }
+
     private static func query(_ host: String) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword,
          kSecAttrService as String: service,
