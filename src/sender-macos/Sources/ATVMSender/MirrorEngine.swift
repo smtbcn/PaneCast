@@ -32,6 +32,11 @@ final class MirrorEngine {
         let encodeP50: Double
         let encodeP95: Double
         let audioPackets: Int
+        /// Ağ sayıları: panonun "ağ sağlığı" kutusu bunlarla dolar. Ölçülen eksik: sayaçlar
+        /// yalnız günlük satırında duruyor, arayüzde hiç görünmüyordu.
+        let nackRequests: Int
+        let retransmitted: Int
+        let dropped: Int
     }
     /// Yakalanan pencerenin uygulamasının sesi de TV'ye gönderilsin mi?
     var capturesAudio = true
@@ -395,10 +400,12 @@ final class MirrorEngine {
         let lat = encoder.latencyPercentiles()
         let cap = capture.captureLatencyPercentiles()
         let audioPackets = audioPacketizer?.packetsSent ?? 0
+        let net = udp?.counters() ?? MediaUdpSender.Counters()
         onStats?(Stats(seconds: secs, fps: Double(frameCount) / secs, mbps: mbps,
                       packets: packetizer.packetsSent, captureP50: cap.p50,
-                      encodeP50: lat.p50, encodeP95: lat.p95, audioPackets: audioPackets))
-        let net = udp?.counters() ?? MediaUdpSender.Counters()
+                      encodeP50: lat.p50, encodeP95: lat.p95, audioPackets: audioPackets,
+                      nackRequests: net.nackRx, retransmitted: net.rtxTx,
+                      dropped: net.injDrop + net.paceDrop + encoder.droppedSizeMismatch))
         log(String(format: "%.0f sn  kare=%d (%.1f fps)  %.1f Mbps  RTP=%d  ses=%d  yakalama p50=%.1f ms  kodlama p50=%.1f/%.1f ms  nackRx=%d rtxTx=%d rtxSkip=%d injDrop=%d paceDrop=%d boyutDüşen=%d",
                    secs, frameCount, Double(frameCount) / secs, mbps, packetizer.packetsSent,
                    audioPackets, cap.p50, lat.p50, lat.p95, net.nackRx, net.rtxTx, net.rtxSkip, net.injDrop, net.paceDrop, encoder.droppedSizeMismatch))

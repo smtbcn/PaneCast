@@ -22,9 +22,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private let search = NSSearchField()
     private let profilePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let startStop = NSButton()
-    private let statsLabel = NSTextField(labelWithString: "")
     private let manualIP = NSTextField(string: "")
-    private let logView = NSTextView(frame: NSRect(x: 0, y: 0, width: 840, height: 168))
+    /// Alt bölgenin panosu: durum çipleri, ölçü kutuları + mini grafikler, tek satır özet,
+    /// katlanmış olaylar. Metin duvarının yerine geçer (kullanıcı isteği + Apple "Charting data").
+    private let dashboard = DashboardView(frame: .zero)
+    /// Arayüz olay defteri: aynı satır ×N olarak katlanır. Ham satırlar yine günlük dosyasına yazılır.
+    private let events = EventBook()
+    /// Pencere yeniden boyutlandığında çerçeveleri baştan hesaplayan kök görünüm.
+    private var root: RootView!
+    private var titleLabel = NSTextField(labelWithString: "PaneCast")
+    private var windowSection = NSTextField(labelWithString: "")
+    private var deviceSection = NSTextField(labelWithString: "")
+    private var refreshButton = NSButton()
+    private var findButton = NSButton()
+    private var addButton = NSButton()
+    private var forgetButton = NSButton()
+    private var arrangeButton = NSButton()
+    private var windowScroll = NSScrollView()
+    private var deviceScroll = NSScrollView()
     private let windowHint = NSTextField(labelWithString: "")
     private let modeControl = NSSegmentedControl(labels: ["Pencere", "TV ekranı (ayrı ekran)"],
                                                  trackingMode: .selectOne, target: nil, action: nil)
@@ -53,8 +68,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private var tvInitiatedHost: String?
     /// Yakalama takıldığında durum şeridindeki tek satır; nil = normal durum adı.
     private var streamNotice: String?
-    /// "TV eşleşmiş diyor, Mac'te anahtar yok" uyarısı her adres için yalnız bir kez yazılır.
+    /// "TV eşleşmiş diyor ama Mac'te anahtar yok" uyarısı her adres için yalnız bir kez yazılır.
     private var orphanWarnings: Set<String> = []
+    /// "Ağda alıcı yok" uyarısı da bir kez yazılır; keşif 20 sn'de bir tekrarlıyor.
+    private var warnedNoTv = false
 
     private static let winColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("win"))
     private static let devColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("dev"))
@@ -126,12 +143,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     // ---------- arayüz ----------
 
     private func buildUI() {
-        let content = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 660))
+        let content = RootView(frame: NSRect(x: 0, y: 0, width: 900, height: 760))
+        root = content
+        content.onLayout = { [weak self] size in self?.layoutContent(size) }
 
-        let title = NSTextField(labelWithString: "PaneCast")
-        title.font = NSFont.systemFont(ofSize: 17, weight: .semibold)
-        title.frame = NSRect(x: 20, y: 620, width: 300, height: 26)
-        content.addSubview(title)
+        titleLabel.font = NSFont.systemFont(ofSize: 17, weight: .semibold)
+        content.addSubview(titleLabel)
 
         statusPill.frame = NSRect(x: 700, y: 622, width: 180, height: 24)
         statusPill.wantsLayer = true
@@ -156,7 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         modeControl.action = #selector(modeChanged)
         content.addSubview(modeControl)
 
-        let windowSection = section("Yayınlanacak pencere", x: 20, y: 588, w: 400)
+        windowSection = section("Yayınlanacak pencere", x: 20, y: 588, w: 400)
         content.addSubview(windowSection)
         search.frame = NSRect(x: 20, y: 552, width: 424, height: 26)
         search.placeholderString = "uygulama veya pencere ara"
@@ -164,13 +181,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         search.target = self
         search.action = #selector(filterChanged)
         content.addSubview(search)
-        let refreshButton = button("Yenile", x: 452, y: 550, w: 88) { [weak self] in
+        refreshButton = button("Yenile", x: 452, y: 550, w: 88) { [weak self] in
             Task { await self?.refreshWindows(keepSelection: false) }
         }
         content.addSubview(refreshButton)
 
         configureTable(windowTable, column: Self.winColumn, width: 520)
-        let windowScroll = NSScrollView(frame: NSRect(x: 20, y: 250, width: 520, height: 292))
         windowScroll.hasVerticalScroller = true
         windowScroll.borderType = .bezelBorder
         windowScroll.documentView = windowTable
@@ -188,7 +204,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         screensNote.textColor = .secondaryLabelColor
         screensNote.isHidden = true
         content.addSubview(screensNote)
-        let arrangeButton = button("Ekranları Düzenle…", x: 20, y: 252, w: 200) {
+        arrangeButton = button("Ekranları Düzenle…", x: 20, y: 252, w: 200) {
             if let url = URL(string: "x-apple.systempreferences:com.apple.Displays-Settings.extension") {
                 NSWorkspace.shared.open(url)
             }
@@ -198,26 +214,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         tvModeViews = [tvModeNote, screensNote, arrangeButton]
         refreshScreensNote()
 
-        content.addSubview(section("Hedef TV — ağdaki cihazlar · çift tıkla: PIN ile eşleştir", x: 560, y: 588, w: 320))
+        deviceSection = section("Hedef TV — ağdaki cihazlar · çift tıkla: PIN ile eşleştir", x: 560, y: 588, w: 320)
+        content.addSubview(deviceSection)
         configureTable(deviceTable, column: Self.devColumn, width: 300)
-        let deviceScroll = NSScrollView(frame: NSRect(x: 560, y: 404, width: 320, height: 176))
         deviceScroll.hasVerticalScroller = true
         deviceScroll.borderType = .bezelBorder
         deviceScroll.documentView = deviceTable
         content.addSubview(deviceScroll)
 
-        content.addSubview(button("TV'yi bul / yeniden tara", x: 560, y: 368, w: 320) { [weak self] in
+        findButton = button("TV'yi bul / yeniden tara", x: 560, y: 368, w: 320) { [weak self] in
             Task { await self?.refreshTVs() }
-        })
+        }
+        content.addSubview(findButton)
         manualIP.frame = NSRect(x: 560, y: 334, width: 216, height: 24)
         manualIP.placeholderString = "TV adresi (192.168.·)"
         content.addSubview(manualIP)
-        content.addSubview(button("Ekle", x: 784, y: 332, w: 96) { [weak self] in
+        addButton = button("Ekle", x: 784, y: 332, w: 96) { [weak self] in
             self?.addManualDevice()
-        })
-        content.addSubview(button("Eşleştirmeyi unut", x: 560, y: 298, w: 320, h: 26) { [weak self] in
+        }
+        content.addSubview(addButton)
+        forgetButton = button("Eşleştirmeyi unut", x: 560, y: 298, w: 320, h: 26) { [weak self] in
             Task { await self?.forgetPairing() }
-        })
+        }
+        content.addSubview(forgetButton)
         windowHint.frame = NSRect(x: 560, y: 250, width: 320, height: 44)
         windowHint.font = NSFont.systemFont(ofSize: 11)
         windowHint.textColor = .secondaryLabelColor
@@ -242,38 +261,82 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         content.addSubview(startStop)
         setRunTitle("Başlat")
 
-        statsLabel.frame = NSRect(x: 560, y: 208, width: 320, height: 26)
-        statsLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        statsLabel.textColor = .secondaryLabelColor
-        statsLabel.alignment = .right
-        content.addSubview(statsLabel)
+        content.addSubview(dashboard)
+        dashboard.clearStats()
 
-        let logScroll = NSScrollView(frame: NSRect(x: 20, y: 16, width: 860, height: 168))
-        logScroll.hasVerticalScroller = true
-        logScroll.borderType = .bezelBorder
-        logScroll.autoresizingMask = [.width, .height]
-        logView.isEditable = false
-        logView.isVerticallyResizable = true
-        logView.isHorizontallyResizable = false
-        logView.minSize = NSSize(width: 0, height: 0)
-        logView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        logView.autoresizingMask = [.width]
-        logView.textContainer?.widthTracksTextView = true
-        logView.textContainer?.containerSize = NSSize(width: logScroll.contentSize.width,
-                                                      height: CGFloat.greatestFiniteMagnitude)
-        logView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        logView.textContainerInset = NSSize(width: 6, height: 8)
-        logScroll.documentView = logView
-        content.addSubview(logScroll)
-
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 660),
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 760),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
                           backing: .buffered, defer: false)
         window.title = "PaneCast"
         window.contentView = content
-        window.minSize = NSSize(width: 860, height: 620)
+        // Sınırlar: 780×600'nin altına inmez — o boyutta pano iki satıra düşer ve listeler
+        // hâlâ okunur; üst sınır yok, `layoutContent` 1240 px'ten sonra içeriği ortalar.
+        window.minSize = NSSize(width: 780, height: 600)
         placeOnCursorScreen()
         window.makeKeyAndOrderFront(nil)
+    }
+
+    /// Pencere boyutuna göre tüm çerçeveleri baştan hesaplar.
+    ///
+    /// Ölçülen kusur: eskiden tek bir `autoresizingMask` dışında bir düzen kuralı yoktu; pencere
+    /// büyütülünce listeler yerinde kalıp sağda/altta kullanılmayan boşluk oluşuyordu,
+    /// küçültülünce de öğeler taşabiliyordu. Şimdi her boyutta iki sütun + kontrol satırı + pano
+    /// yeniden hesaplanır; 1240 px'ten geniş pencerede içerik ortalanır (uzayıp seyrelmesin).
+    private func layoutContent(_ size: NSSize) {
+        let w = size.width, h = size.height
+        let inset = max(20, (w - 1240) / 2)
+        let gap: CGFloat = 16
+        let usable = max(360, w - 2 * inset)
+        let leftW = max(280, (usable - gap) * 0.58)
+        let rightW = max(220, usable - gap - leftW)
+        let leftX = inset, rightX = inset + leftW + gap
+
+        // Pano yüksekliği içerikten hesaplanır. 640 px'ın altında ölçü kutuları kalkar
+        // (çipler + özet + olaylar kalır): her şeyi sıkıştırmaktansa sınır koymak okunur kalıyor.
+        let compact = h < 640
+        dashboard.compact = compact
+        let want = dashboard.neededHeight(forWidth: usable)
+        let dashH = min(max(compact ? 96 : 150, want), max(96, h - 296))
+        let dashY: CGFloat = 14
+        let controlH: CGFloat = 38
+        let controlsY = dashY + dashH + 12
+        let listsBottom = controlsY + controlH + 12
+        let listsTop = h - 100
+
+        dashboard.frame = NSRect(x: inset, y: dashY, width: usable, height: dashH)
+
+        titleLabel.frame = NSRect(x: leftX, y: h - 40, width: 110, height: 26)
+        statusPill.frame = NSRect(x: w - inset - 180, y: h - 38, width: 180, height: 24)
+        modeControl.frame = NSRect(x: leftX + 118, y: h - 39, width: min(340, max(180, usable - 340)), height: 26)
+
+        windowSection.frame = NSRect(x: leftX, y: h - 68, width: leftW, height: 16)
+        let searchW = max(120, leftW - 96)
+        search.frame = NSRect(x: leftX, y: listsTop, width: searchW, height: 26)
+        refreshButton.frame = NSRect(x: leftX + searchW + 8, y: listsTop - 2, width: 88, height: 28)
+        windowScroll.frame = NSRect(x: leftX, y: listsBottom, width: leftW,
+                                    height: max(70, listsTop - 30 - listsBottom))
+
+        profilePopup.frame = NSRect(x: leftX, y: controlsY + 6, width: 200, height: 26)
+        startStop.frame = NSRect(x: leftX + 216, y: controlsY, width: max(160, leftW - 216), height: controlH)
+
+        // Sağ sütun alta doğru kurulur: ipucu → eşleştirmeyi unut → adres+ekle → tara → liste.
+        var ry = controlsY
+        windowHint.frame = NSRect(x: rightX, y: ry, width: rightW, height: 40); ry += 44
+        forgetButton.frame = NSRect(x: rightX, y: ry, width: rightW, height: 26); ry += 30
+        manualIP.frame = NSRect(x: rightX, y: ry + 1, width: max(110, rightW - 104), height: 24)
+        addButton.frame = NSRect(x: rightX + rightW - 92, y: ry - 1, width: 92, height: 28); ry += 32
+        findButton.frame = NSRect(x: rightX, y: ry, width: rightW, height: 28); ry += 32
+        deviceSection.frame = NSRect(x: rightX, y: h - 68, width: rightW, height: 16)
+        // Liste üstü soldaki listeyle aynı hizada; yükseklik artan yerden hesaplanır.
+        // Ölçülen kusur: sabit "en az 70 px" kuralı dar pencerede listeyi bölüm etiketinin üstüne çıkarıyordu.
+        let rightListTop = listsTop - 30
+        let rightListBottom = max(listsBottom, min(ry, rightListTop - 44))
+        deviceScroll.frame = NSRect(x: rightX, y: rightListBottom, width: rightW,
+                                    height: max(0, rightListTop - rightListBottom))
+
+        tvModeNote.frame = NSRect(x: leftX, y: listsBottom + 96, width: leftW, height: 130)
+        screensNote.frame = NSRect(x: leftX, y: listsBottom, width: leftW, height: 88)
+        arrangeButton.frame = NSRect(x: leftX, y: listsBottom - 32, width: 200, height: 28)
     }
 
     private func section(_ s: String, x: CGFloat, y: CGFloat, w: CGFloat) -> NSTextField {
@@ -335,6 +398,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     }
     private var retainers: [ActionBox] = []
 
+    /// Tanılama satırı: **yalnız** günlük dosyasına yazılır, arayüzde görünmez.
+    /// Arayüz metin duvarı olmaktan kurtarıldı; teşhis gerektiğinde dosya okunur.
     private func log(_ s: String) {
         engine.onLog = { [weak self] in self?.append($0) }
         append(s)
@@ -343,11 +408,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private func append(_ s: String) {
         // `open` ile başlatılan GUI'nin stdout'u yoktur; tanılamayı dosyaya da yaz.
         emit(s)
-        logView.textStorage?.append(NSAttributedString(string: s + "\n", attributes: [
-            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
-            .foregroundColor: NSColor.textColor,
-        ]))
-        logView.scrollToEndOfDocument(nil)
+    }
+
+    /// Arayüzde görünen olay. Aynı metin tekrarlanırsa yeni satır açılmaz, sayaç artar
+    /// (ölçülen kusur: "keşif:" satırı 20 sn'de bir eklenip paneli dolduruyordu).
+    private func note(_ s: String, _ severity: EventSeverity = .info) {
+        emit(s)
+        events.add(s, severity)
+        dashboard.reloadEvents(events.rows, groups: events.groupCount, lines: events.lineCount)
     }
 
     // ---------- tablolar ----------
@@ -422,13 +490,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             windowHint.stringValue = tv.online
                 ? "TV yayında ama adresi elimizde değil: TV'yi bul / yeniden tara'ya bas; yine de gelmezse adresi kutuya yazıp Ekle'ye bas."
                 : "Bu TV kapalı görünüyor; TV'de uygulamayı aç ve yeniden tara."
-            log("eşleşme reddi: \(tv.displayName) adresi bilinmiyor (yayın: \(tv.online ? "var" : "yok"))")
+            note("Eşleşme reddi: \(tv.displayName) adresi bilinmiyor (yayın: \(tv.online ? "var" : "yok"))", .warn)
             return
         }
         guard tv.online else {
             setStatus("TV kapalı")
             windowHint.stringValue = "Bu TV'nin uygulamasını aç; sonra yeniden tara."
-            log("eşleşme reddi: \(tv.displayName) kapalı")
+            note("Eşleşme reddi: \(tv.displayName) kapalı", .warn)
             return
         }
         engine.setHost(tv.host)
@@ -438,11 +506,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             let hs = try await engine.connectAndHello(host: tv.host)
             if hs == .paired {
                 setStatus("Zaten eşleşmiş")
+                note("\(tv.displayName) zaten eşleşmiş — pencere seçip Başlat'a bas")
                 log("eşleşme var: \(tv.displayName) — pencere seçip Başlat'a bas")
             } else {
                 guard let pin = await askPin() else { await engine.stop(); return }
                 try await engine.submitPin(pin)
-                log("eşleşme tamamlandı: \(tv.displayName) · \(tv.host) — pencere seçip Başlat")
+                note("Eşleşme tamamlandı: \(tv.displayName) · \(tv.host)")
                 setStatus("Eşleşti")
             }
             KeyStore.storeName(tv.name, for: tv.host)
@@ -472,6 +541,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             await engine.stop()                                  // Mac başlattıysa kontrol kanalından `stop` gider
             if let tvHost { advertised.notifyStopped(host: tvHost) }   // TV başlattıysa TV'nin kendi bağlantısından
             tvInitiatedHost = nil
+            note("Yayın durduruldu, kaynaklar serbest bırakıldı")
             refreshRunButton()
         }
     }
@@ -519,14 +589,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         guard let host = selectedHost() else {
             setStatus("TV seçilmedi")
             windowHint.stringValue = "Sağdaki listeden bir TV seç; listesi boşsa TV'yi bul ya da adresi elle yazıp Ekle'ye bas."
-            log("reddedildi: hedef TV yok (satır seçili değil ya da adresi bilinmiyor)")
+            dashboard.setSummary("Başlatılamadı: hedef TV seçili değil.", .bad)
+            note("Başlat reddedildi: hedef TV yok (satır seçili değil ya da adresi bilinmiyor)", .error)
             return
         }
         let row = windowTable.selectedRow
         guard tvDisplayMode || (row >= 0 && row < shown.count) else {
             setStatus("Pencere seçilmedi")
             windowHint.stringValue = "Soldaki listeden yayınlanacak pencereyi seç."
-            log("reddedildi: pencere seçimi yok")
+            dashboard.setSummary("Başlatılamadı: yayınlanacak pencere seçili değil.", .bad)
+            note("Başlat reddedildi: pencere seçimi yok", .error)
             return
         }
         let source: MirrorEngine.CastSource = tvDisplayMode ? .tvDisplay : .window(shown[row])
@@ -547,6 +619,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             // Başarı yolunda düğmeyi ve durumu yenile: aksine "Başlat" yazılı kalıyor.
             streamNotice = nil
             refreshRunButton()
+            note("Yayın başladı · \(what) → \(host) · \(profile.width)x\(profile.height)@\(profile.fps)")
         } catch let e as ControlClient.ControlError {
             await engine.stop(); fail("Başlatılamadı", e.description)
         } catch let e as CaptureError {
@@ -563,7 +636,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         guard !engine.isRunning else { log("yayın zaten sürüyor; yeni istek yok sayıldı"); return }
         let row = windowTable.selectedRow
         guard tvDisplayMode || (row >= 0 && row < shown.count) else {
-            log("TV yayın istedi ama arayüzde pencere seçili değil — bir pencere seçmen yeterli")
+            note("TV yayın istedi ama arayüzde pencere seçili değil — bir pencere seçmen yeterli", .warn)
             windowHint.stringValue = "TV yayın istedi: soldan bir pencere seç, akış hemen o pencereye geçer."
             session.reject("no_window_selected_on_sender")
             return
@@ -597,7 +670,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private func fail(_ title: String, _ detail: String) {
         setStatus(title)
         windowHint.stringValue = detail
-        log("\(title): \(detail)")
+        dashboard.setSummary("\(title): \(detail)", .bad)
+        note("\(title): \(detail)", .error)
         refreshRunButton()
     }
 
@@ -618,7 +692,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         let manual = manualIP.stringValue.trimmingCharacters(in: .whitespaces)
         guard let host = selectedHost() else {
             windowHint.stringValue = "Sağdaki listeden eşleşmeyi kaldırmak istediğin TV'yi seç."
-            log("eşleşme unutulmadı: hedef yok (liste satırı seçili değil ya da adresi boş)")
+            note("Eşleşme unutulmadı: hedef yok (liste satırı seçili değil ya da adresi boş)", .warn)
             return
         }
         let name = selectedDevice()?.displayName ?? host
@@ -626,7 +700,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         // TV'nin kontrol sunucusu tek oturumlu: yayın sürerken aynı adrese açılan ikinci bağlantı
         // bekler. Ölçülen kusur: düğme hiçbir şey yapmadan asılı kalıyor, kayıt silinmiyordu.
         if engine.isRunning, engine.streamingHost == host || tvInitiatedHost == host {
-            log("yayın durduruluyor: kontrol kanalı boşalmadan eşleşme kaldırılamıyor")
+            note("Eşleşme kaldırılıyor: yayın durduruldu (kontrol kanalı boşalmadan kaldırılamıyor)")
             await engine.stop()
             tvInitiatedHost = nil
             refreshRunButton()
@@ -643,12 +717,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             c.disconnect()
             tvForgetful = true
         } catch {
-            log("TV'ye ulaşılamadı (kapalı, adres değişmiş ya da kanal meşgul) — kaydı yalnız bu Mac'ten siliyorum: \(error)")
+            note("TV'ye ulaşılamadı (kapalı, adres değişmiş ya da kanal meşgul) — kayıt yalnız bu Mac'ten siliniyor: \(error)", .warn)
         }
         KeyStore.remove(host)     // Anahtar + ad kaydı; yarımkalır eşleşme bırakmamak için
-        log(tvForgetful
-            ? "eşleşme iki uçtan da kaldırıldı: \(host)"
-            : "eşleşme bu Mac'ten silindi: \(host) — TV tarafı hâlâ hatırlıyor olabilir: TV'de uygulamayı açıp eşleşmeyi oradan da unut")
+        note(tvForgetful
+             ? "Eşleşme iki uçtan da kaldırıldı: \(host)"
+             : "Eşleşme bu Mac'ten silindi: \(host) — TV tarafı hâlâ hatırlıyor olabilir: TV'de uygulamayı açıp eşleşmeyi oradan da unut")
         await refreshTVs()
     }
 
@@ -661,18 +735,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             deviceTable.selectRowIndexes(IndexSet(integer: i), byExtendingSelection: false)
         }
         let paired = found.filter { KeyStore.isPaired($0.host) }.count
+        // Keşif tek yerde durur: çip. Her 20 saniyede bir satır eklenmesi paneli okunamaz
+        // yapıyordu (kullanıcı isteği: "keşif sürekli gelmesin, tek bir yerde bulundu/bulunmadı").
+        dashboard.chipDiscovery.set(found.isEmpty ? "yayın yok" : "\(found.count) TV · \(paired) eşleşmiş",
+                                    state: found.isEmpty ? .idle : .ok)
         if found.isEmpty {
             log("keşif: ağda alıcı yayını yok — TV'de uygulamayı açık tut ya da TV'den bu bilgisayarı seç")
+            if !warnedNoTv {
+                warnedNoTv = true
+                note("Ağda alıcı yayını yok — TV'de uygulamayı açık tut ya da TV'den bu bilgisayarı seç", .warn)
+            }
         } else {
+            warnedNoTv = false
             log("keşif: \(found.count) TV bulundu (\(paired) eşleşmiş)")
         }
         // TV kendi eşleşmesini hatırlıyor ama Mac'te anahtarı yok: tipik neden TV'nin adresinin
-        // değişmesidir, anahtar eski adreste kalır. Yayın 20 sn'de bir tekrarlandığı için uyarı
+        // değişmesidir, anahtar eski adreste kalır. Keşif 20 sn'de bir tekrarlandığı için uyarı
         // başına bir kez yazılır.
         for tv in found where tv.tvReportsPaired && !KeyStore.isPaired(tv.host)
             && !orphanWarnings.contains(tv.host) {
             orphanWarnings.insert(tv.host)
-            log("eşleşme uyuşmuyor: \(tv.displayName) TV'de eşleşmiş görünüyor ama bu Mac'te anahtarı yok — satıra çift tıkla, PIN'i yeniden gir")
+            note("\(tv.displayName) TV'de eşleşmiş görünüyor ama bu Mac'te anahtarı yok — satıra çift tıkla, PIN'i yeniden gir", .warn)
         }
         refreshRunButton()
     }
@@ -749,9 +832,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     /// basınca yayını durduruyordu (TV'den başlatılan akışta `startForTV` çağırdığı için görülmedi).
     private func refreshRunButton() {
         setRunTitle(engine.isRunning ? "Durdur" : "Başlat")
-        if !engine.isRunning { streamNotice = nil; statsLabel.stringValue = "" }
+        if !engine.isRunning { streamNotice = nil; dashboard.clearStats() }
         setStatus(streamNotice ?? (engine.isRunning ? "Yayında" : "Hazır"))
         modeControl.isEnabled = !engine.isRunning
+        syncChips()
+    }
+
+    /// Durum çipleri seçime ve yayına göre tek yerden doldurulur: kullanıcı "neyi, nereye,
+    /// hangi kanalla" yayınladığını satır satır okumadan görebilsin.
+    private func syncChips() {
+        let source: String
+        var sourceState: ChipView.State = .ok
+        if tvDisplayMode {
+            source = "TV ekranı (ayrı ekran)"
+        } else if let win = shown[safe: windowTable.selectedRow] {
+            source = "\(win.app) — \(win.title)"
+        } else {
+            source = "pencere seçilmedi"
+            sourceState = .warn
+        }
+        dashboard.chipSource.set(source, state: sourceState)
+
+        let target: String
+        var targetState: ChipView.State = .ok
+        if let manual = selectedHost(), !manual.isEmpty {
+            target = manual
+        } else if let tv = selectedDevice() {
+            target = "\(tv.displayName) · \(tv.host.isEmpty ? "adres bilinmiyor" : tv.host)"
+            if tv.host.isEmpty { targetState = .warn }
+        } else {
+            target = "TV seçilmedi"
+            targetState = .warn
+        }
+        dashboard.chipTarget.set(target, state: targetState)
+
+        let profile = profilePopup.titleOfSelectedItem ?? "1080p60"
+        dashboard.chipChannel.set("\(profile) · \(engine.isRunning ? "yayında" : "boşta")",
+                                  state: engine.isRunning ? .ok : .idle)
     }
 
     /// Düğmenin etiketi ve zemini tek yerden: yayın YOKKEN yeşil "Başlat", VARken kırmızı "Durdur".
@@ -775,10 +892,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     }
 
     private func render(_ s: MirrorEngine.Stats) {
-        statsLabel.stringValue = String(format: "%.0f fps · %.1f Mbps · RTP %d · ses %d · kodlama %.1f ms",
-                                        s.fps, s.mbps, s.packets, s.audioPackets, s.encodeP50)
+        dashboard.setStats(s)
         if tvDisplayMode { refreshScreensNote() }
         setStatus(streamNotice ?? "Yayında")
+        guard engine.isRunning else { return }
+        if let notice = streamNotice {
+            dashboard.setSummary(notice, .warn)
+        } else {
+            let trouble = s.nackRequests + s.dropped
+            // "sağlam" demiyoruz: hareketsiz pencerede kare gelmez, bu arıza değil. Yalnız
+            // kayıp sayısı hüküm verir.
+            dashboard.setSummary("Akış açık · \(Int(s.seconds)) sn · \(DashboardView.grouped(s.packets)) paket ·"
+                                 + " kayıp \(trouble) · \(String(format: "%.1f", s.fps)) fps",
+                                 trouble == 0 ? .ok : .warn)
+        }
     }
 
     /// Rozet rengi **yayın durumundan** gelir, metinden değil: metin geçici uyarıları da
@@ -804,16 +931,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             log("Ekran Kaydı izni isteniyor: sistem penceresi ekranda bekleyebilir, arkaya düşmüşse Sistem Ayarları → Gizlilik ve Güvenlik → Ekran Kaydı.")
             WindowCapture.requestFromSystem()
             if await WindowCapture.isGranted() {
-                log("Ekran Kaydı izni verildi — pencere listesi yenileniyor.")
+                note("Ekran Kaydı izni verildi — pencere listesi yenileniyor")
                 await refreshWindows(keepSelection: true)
                 return
             }
-            log("Ekran Kaydı izni bekleniyor: Sistem Ayarları → Gizlilik ve Güvenlik → Ekran Kaydı → PaneCast. Anahtarı açınca bu liste kendiliğinden dolar.")
+            note("Ekran Kaydı izni bekleniyor: Sistem Ayarları → Gizlilik ve Güvenlik → Ekran Kaydı → PaneCast", .warn)
+            dashboard.setSummary("Ekran Kaydı izni bekleniyor — anahtarı açınca liste kendiliğinden dolar.", .warn)
             if await WindowCapture.wait(forGrant: 240) {
-                log("Ekran Kaydı izni alındı — pencere listesi yenileniyor.")
+                note("Ekran Kaydı izni alındı — pencere listesi yenileniyor")
+                dashboard.setSummary("Hazır — soldan pencere, sağdan TV seç.", .idle)
                 await refreshWindows(keepSelection: true)
             } else {
-                log("Ekran Kaydı izni hâlâ yok. Anahtarı açtıysan PaneCast'ı kapatıp yeniden aç: macOS bu izni değişince uygulamayı yeniden başlatmak isteyebiliyor.")
+                note("Ekran Kaydı izni hâlâ yok. Anahtarı açtıysan PaneCast'ı kapatıp yeniden aç (macOS izin değişimde uygulamayı yeniden başlatmak isteyebiliyor).", .error)
             }
         }
     }
@@ -826,14 +955,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         guard let id = Bundle.main.bundleIdentifier else { return }
         let paths = NSWorkspace.shared.urlsForApplications(withBundleIdentifier: id).map(\.path)
         if paths.count > 1 {
-            log("dikkat: \(id) kimliğiyle \(paths.count) PaneCast kopyası kayıtlı — izin ve TV kanalları karışır. Tek kopyayı kullan; diğerini klasörden çıkar.")
+            note("\(paths.count) PaneCast kopyası kayıtlı — izin ve TV kanalları karışır. Tek kopyayı kullan; diğerini klasörden çıkar.", .warn)
         }
         let mine = ProcessInfo.processInfo.processIdentifier
         let others = NSWorkspace.shared.runningApplications.filter {
             $0.bundleIdentifier == id && $0.processIdentifier != mine
         }
         if !others.isEmpty {
-            log("dikkat: PaneCast zaten çalışıyor (pid \(others.map { String($0.processIdentifier) }.joined(separator: ", "))) — iki örnek aynı TV kanallarını paylaşamaz.")
+            note("PaneCast zaten çalışıyor (pid \(others.map { String($0.processIdentifier) }.joined(separator: ", "))) — iki örnek aynı TV kanallarını paylaşamaz.", .warn)
         }
     }
 
@@ -982,6 +1111,16 @@ final class DeviceCell: NSTableCellView {
         }
         baseSecondaryColor = renk
         secondary.textColor = backgroundStyle == .emphasized ? .white : renk
+    }
+}
+
+/// İçeriği taşıyan kök görünüm: pencere yeniden boyutlandığında çerçevelerin yeniden
+/// hesaplanması için bir geri çağırma verir (`layout()` AppKit'te her boyut değişiminde koşar).
+private final class RootView: NSView {
+    var onLayout: ((NSSize) -> Void)?
+    override func layout() {
+        super.layout()
+        onLayout?(bounds.size)
     }
 }
 
