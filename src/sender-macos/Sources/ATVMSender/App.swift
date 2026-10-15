@@ -603,15 +603,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             windowHint.stringValue = "Sağdaki listeden eşleşmeyi kaldırmak istediğin TV'yi seç."
             return
         }
+        // İki uç ayrı işler: TV'ye ulaşmak *denenir*, ama ulaşılamıyorsa bu Mac'teki kayıt
+        // yine de silinmelidir. Ölçülen kusur: adres değişmiş/eski satırda `connect()` patlıyor,
+        // `KeyStore.remove` hiç çağrılmıyor ve kullanıcı ölü eşleşme kaydını silemiyordu.
+        var tvForgetful = false
         do {
             let c = ControlClient(host: host)
             try await c.connect()
             // `unpair` yalnız doğrulanmış oturumda kabul edilir; TV PIN istiyorsa zaten eşleşmesizdir.
             if try await c.beginHello() == .paired { try await c.unpair() }
             c.disconnect()
-            KeyStore.remove(host)     // TV anahtarı sildi; Mac de silmezse yarımkalır eşleşme kalır
-            log("eşleşme iki uçtan da kaldırıldı: \(host)")
-        } catch { log("eşleştirme silinemedi: \(error)") }
+            tvForgetful = true
+        } catch {
+            log("TV'ye ulaşılamadı (kapalı ya da adres değişti) — kaydı yalnız bu Mac'ten siliyorum: \(error)")
+        }
+        KeyStore.remove(host)     // Anahtar + ad kaydı; yarımkalır eşleşme bırakmamak için
+        log(tvForgetful
+            ? "eşleşme iki uçtan da kaldırıldı: \(host)"
+            : "eşleşme bu Mac'ten silindi: \(host) — TV tarafı hâlâ hatırlıyor olabilir: TV'de uygulamayı açıp eşleşmeyi oradan da unut")
         await refreshTVs()
     }
 
