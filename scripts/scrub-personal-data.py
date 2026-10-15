@@ -8,9 +8,13 @@
    gömülmediler; aksi halde denetimin kendisi kişisel veri taşırırdı.
    `scripts/privacy-patterns.local.txt` dosyasından okunur (gitignore'da).
 
+Ayrıca commit METADATA'sı taranır: yazar/imzacı e-postaları (--all-history) ve bir sonraki
+commit'in kullanacağı `git config` kimliği (--worktree). Dosya içeriği temiz olsa bile işveren
+adresi geçmişte kamuya açılabilir (15.10.2026'da ölçüldü).
+
 Kullanım:
   ./scripts/scrub-personal-data.py --check                  # iz varsa exit 1
-  ./scripts/scrub-personal-data.py --check --all-history    # tarihçe bloblarını da tara
+  ./scripts/scrub-personal-data.py --check --all-history    # tarihçe blobları + commit kimlikleri
 """
 from __future__ import annotations
 
@@ -58,15 +62,26 @@ ALLOW_VALUES = {"noreply@github.com", "opensource@example.com"}
 
 
 def load_local(path: str) -> dict[str, str]:
+    """Yasaklı yerel kalıplar. `+` ile başlayan satırlar kalıp değil, commit metadata'sında
+    serbest olan kimlik değeridir (kamuya açık GitHub adresi gibi) — onlar `load_allowed`a gider."""
     out: dict[str, str] = {}
     if not os.path.isfile(path):
         return out
     for i, line in enumerate(open(path, encoding="utf-8")):
         value = line.rstrip("\n").strip()
-        if not value or value.startswith("#"):
+        if not value or value.startswith("#") or value.startswith("+"):
             continue
         out[f"yerel-{i + 1}"] = re.escape(value)
     return out
+
+
+def load_allowed(path: str) -> set[str]:
+    """`+satır` biçimindeki izinli kimlik değerleri (yalnız commit metadata taramasında kullanılır)."""
+    if not os.path.isfile(path):
+        return set()
+    return {line.rstrip("\n").strip()[1:].strip()
+            for line in open(path, encoding="utf-8")
+            if line.strip().startswith("+")}
 
 
 def worktree() -> list[tuple[str, str]]:
@@ -103,6 +118,52 @@ def read(spec: str) -> bytes:
     return subprocess.run(["git", "-C", ROOT, "cat-file", "-p", spec], capture_output=True).stdout
 
 
+def commit_identities() -> list[tuple[str, str]]:
+    """Ulaşılabilir tüm commit'lerin yazar/imzacı **e-postaları**.
+
+    Neden ayrı bir tarama: dosya içeriği taranırken commit metadata'sı taranmıyordu.
+    Ölçüldü (15.10.2026) — yayına hazırlanan depoya işveren kimliğiyle 5 commit yazılmıştı
+    ve `--check --all-history` hiçbir şey bulmadı; push edilse kimlik kamuya çıkacaktı.
+    Yalnız e-posta taranır: yazar adı, kamuya açık kimlikte de zorunlu olarak görünür.
+    Değerler **yazdırılmaz**, yalnız hangi commit olduğu bildirilir.
+    """
+    res = subprocess.run(["git", "-C", ROOT, "log", "--all", "--format=%h%x09%ae%x09%ce"],
+                         capture_output=True, text=True)
+    out: list[tuple[str, str]] = []
+    for line in res.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) == 3:
+            out.append((f"commit {parts[0]} yazarı", parts[1]))
+            out.append((f"commit {parts[0]} imzacısı", parts[2]))
+    return out
+
+
+def config_identity() -> list[tuple[str, str]]:
+    """Bir sonraki commit'in kullanacağı e-posta: pre-commit'te erken uyarı.
+
+    Depo-yeri `user.email` kurulmamışsa küresel değer miras alınır; iş makinesinde bu
+    değer işveren adresi olabilir. Yanlış kimlikle commit yazıldıktan sonra düzeltmek,
+    geçmiş yeniden yazmayı gerektirdiği için pahalıdır.
+    """
+    r = subprocess.run(["git", "-C", ROOT, "config", "--get", "user.email"],
+                       capture_output=True, text=True)
+    value = r.stdout.strip()
+    return [("git config user.email", value)] if r.returncode == 0 and value else []
+
+
+def scan_identities(local: dict[str, str], allowed: set[str], all_history: bool) -> list[tuple[str, str]]:
+    """Yalnız YEREL kalıplarla ve izinli değerler düşülerek: genel e-posta kuralı, kamuya
+    açık olması sorun olmayan kendi GitHub adresimizi de yakalardı."""
+    hits: list[tuple[str, str]] = []
+    for where, value in (commit_identities() if all_history else config_identity()):
+        if value in allowed or value in ALLOW_VALUES:
+            continue
+        for name, pat in local.items():
+            if re.search(pat, value, re.I):
+                hits.append((where, name))
+    return hits
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true")
@@ -113,8 +174,10 @@ def main() -> int:
 
     patterns = dict(GENERIC)
     local = load_local(LOCAL_PATTERNS_FILE)
+    allowed = load_allowed(LOCAL_PATTERNS_FILE)
     if local:
-        print(f"yerel kalıp dosyası: {len(local)} kural")
+        print(f"yerel kalıp dosyası: {len(local)} kural"
+              + (f", {len(allowed)} izinli commit kimliği" if allowed else ""))
     else:
         print("UYARI: scripts/privacy-patterns.local.txt yok — yalnız genel kalıplar taranıyor.")
     patterns.update(local)
@@ -142,15 +205,25 @@ def main() -> int:
                 snip = text[lo:m.end() + 40].replace("\n", " ")
                 findings.append((path, name, snip[:160]))
 
-    if not findings:
+    identity_hits = scan_identities(local, allowed, args.all_history)
+
+    if not findings and not identity_hits:
         print("temiz: kişisel/cihaz/ağ kimliği ve üçüncü taraf yazılım adı izi yok")
         return 0
 
-    print(f"BULGU: {len(findings)} iz")
-    for path, name, snip in findings[:40]:
-        print(f"  {path}  [{name}]  …{snip}…")
-    if len(findings) > 40:
-        print(f"  … ve {len(findings) - 40} tane daha")
+    if findings:
+        print(f"BULGU: {len(findings)} iz")
+        for path, name, snip in findings[:40]:
+            print(f"  {path}  [{name}]  …{snip}…")
+        if len(findings) > 40:
+            print(f"  … ve {len(findings) - 40} tane daha")
+    if identity_hits:
+        # Değerler bilinçli olarak yazdırılmaz: raporun kendisi kişisel veri taşımasın.
+        print(f"BULGU: {len(identity_hits)} commit kimliği izi (değerler yazdırılmıyor)")
+        for where, name in identity_hits[:20]:
+            print(f"  {where}  [{name}]  → git config --local user.email ile doğru kimliği kur")
+        if len(identity_hits) > 20:
+            print(f"  … ve {len(identity_hits) - 20} tane daha")
     return 1
 
 

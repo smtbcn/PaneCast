@@ -70,6 +70,13 @@ warning (it never falls back to the debug key) and `scripts/release-android.sh` 
    (cd src/sender-macos && swift test)
    (cd receiver && gradle assembleDebug) && scripts/test-receiver-reorder.sh
    ```
+   The audit also reads **commit metadata**: `--check --worktree` rejects a repo whose
+   `git config user.email` resolves to a forbidden identity (a work machine often inherits the
+   employer address), and `--check --all-history` scans every reachable commit's author and
+   committer e-mail. Allowed public values are listed as `+value` lines in
+   `scripts/privacy-patterns.local.txt` (gitignored); offending values are never printed.
+   Set the repo-local identity **before the first commit** — rewriting history afterwards is
+   expensive, and a pushed employer address cannot be taken back.
 3. Build everything:
    ```bash
    RELEASE_CHANGES_FILE=path/to/whats-new.md ./scripts/release-all.sh
