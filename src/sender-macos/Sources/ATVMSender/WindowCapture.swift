@@ -100,6 +100,24 @@ final class WindowCapture: NSObject, @unchecked Sendable {
         super.init()
     }
 
+    /// Ekran kaydı izni verildi mi? (Yalnız yoklar, istekte bulunmaz.)
+    static func isGranted() async -> Bool { await canListContent() }
+
+    /// Sistem onay penceresini / listeye eklemeyi tetikler; sonucu beklemez.
+    static func requestFromSystem() { CGRequestScreenCaptureAccess() }
+
+    /// Kullanıcı Sistem Ayarları'nda anahtarı açana kadar `seconds` boyunca yoklar.
+    /// GUI bunu kullanır: ölçülen kusur, tek atışlık kontrolün izin **verildikten sonra bile**
+    /// "yok" demesiydi (kullanıcı anahtarı açıyor, uygulama fark etmiyordu).
+    static func wait(forGrant seconds: Double) async -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            if await canListContent() { return true }
+        }
+        return await canListContent()
+    }
+
     /// Ekran kaydı iznini ister.
     ///
     /// DÜZELTİLEN KUSUR: yalnızca CGRequestScreenCaptureAccess() çağırıp false dönerse
@@ -129,27 +147,32 @@ final class WindowCapture: NSObject, @unchecked Sendable {
         └────────────────────────────────────────────────────────────────────┘
 
         """.data(using: .utf8)!)
-        let deadline = Date().addingTimeInterval(waitSeconds)
-        while Date() < deadline {
-            try? await Task.sleep(nanoseconds: 700_000_000)
-            if await canListContent() {
-                FileHandle.standardError.write("izin alındı, devam ediliyor\n".data(using: .utf8)!)
-                return
-            }
+        if await wait(forGrant: waitSeconds) {
+            FileHandle.standardError.write("izin alındı, devam ediliyor\n".data(using: .utf8)!)
+            return
         }
         throw CaptureError.permissionDenied
     }
 
+    /// GUI, izin yoklamasının gerçek hata kodunu arayüz günlüğüne yazmak için bunu doldurur.
+    /// Ölçülen eksik: stderr'e yazılan hata satırları `.app` olarak açıldığında hiçbir yerde
+    /// görünmüyor, "izin yok" sanılan başka bir arıza teşhis edilemiyordu.
+    static var permissionNote: ((String) -> Void)?
+
     private static func canListContent() async -> Bool {
+        func report(_ m: String) {
+            if let note = permissionNote { note(m) }
+            else { FileHandle.standardError.write((m + "\n").data(using: .utf8)!) }
+        }
         do {
             _ = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
             return true
         } catch let e as NSError {
             // Tanılama: "izin yok" sanılan başka hatalar gerçekten izin hatası olmayabilir.
-            FileHandle.standardError.write("SCShareableContent hata: domain=\(e.domain) code=\(e.code) \(e.localizedDescription)\n".data(using: .utf8)!)
+            report("SCShareableContent hata: domain=\(e.domain) code=\(e.code) \(e.localizedDescription)")
             return false
         } catch {
-            FileHandle.standardError.write("SCShareableContent hata: \(error)\n".data(using: .utf8)!)
+            report("SCShareableContent hata: \(error)")
             return false
         }
     }

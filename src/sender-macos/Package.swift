@@ -12,9 +12,13 @@ let package = Package(
     targets: [
         // CoreGraphics'in özel sanal ekran sınıfları için küçük Objective-C köprüsü (TV ekranı modu).
         .target(name: "CVirtualDisplay", path: "Sources/CVirtualDisplay"),
+        // dns_sd.h: TV'nin adresini cihazın kapısını çalmadan mDNS'ten çözmek için ince köprü.
+        // Ayrı kütüphane bağlanmaz: semboller libSystem içinde (system/libsystem_dnssd.tbd —
+        // /usr/bin/dns-sd de yalnız libSystem.B.dylib kullanıyor; ölçüldü).
+        .target(name: "CDnsSD", path: "Sources/CDnsSD"),
         .executableTarget(
             name: "atvm-sender",
-            dependencies: ["CVirtualDisplay"],
+            dependencies: ["CVirtualDisplay", "CDnsSD"],
             path: "Sources/ATVMSender",
             linkerSettings: [
                 .linkedFramework("ScreenCaptureKit"),

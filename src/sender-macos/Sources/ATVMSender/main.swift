@@ -17,8 +17,13 @@ application.setActivationPolicy(.accessory)
 let logPath = (args.firstIndex(of: "--log").map { $0 + 1 < args.count ? args[$0 + 1] : "" }
     .flatMap { $0.isEmpty ? nil : $0 })
     ?? ProcessInfo.processInfo.environment["ATVM_LOG"]
+/// GUI ve CLI ayrı günlük tutar: aynı dosyayı paylaşınca CLI yoklaması açılışta GUI'nin
+/// satırlarını kesiyordu (ölçüldü: arayüzün "keşif:" satırı görünmez oluyordu, `- --log`
+/// ile açıkça yol verildiğinde ise tek dosyada toplanır).
+let guiRun = args.count < 2 || args[1] == "gui"
 let logFile = logPath.map { URL(fileURLWithPath: $0) }
-    ?? FileManager.default.temporaryDirectory.appendingPathComponent("atvm-sender.log")
+    ?? FileManager.default.temporaryDirectory
+        .appendingPathComponent(guiRun ? "panecast-gui.log" : "atvm-sender.log")
 func emit(_ line: String) {
     print(line)
     if let h = try? FileHandle(forWritingTo: logFile) {
@@ -50,6 +55,7 @@ func usage() -> Never {
       atvm-sender gui                        # arayüzü aç (çift tıklamayla da açılır)
       atvm-sender list-tvs
       atvm-sender list-pairs                     # eşleşme defteri (anahtar değerleri yazdırılmaz)
+      atvm-sender dns-probe [--seconds 4]        # mDNS zinciri: browse → resolve → IPv4
       atvm-sender list-windows [--app SÜZGEÇ]
       atvm-sender selftest [--profile 1080p60] [--frames 300]
       atvm-sender audio-tap-test --pid <süreç> [--seconds 3] [--wav yol]   # uygulama sesi tap'i, TV'siz
@@ -97,6 +103,14 @@ case "list-tvs":
     let tvs = await TvDiscovery.browse(seconds: Double(num("--seconds", 3)))
     if tvs.isEmpty { print("yerel ağda PaneCast alıcısı bulunamadı (TV'de uygulamayı açın)") }
     for t in tvs { print(t) }
+    exit(0)
+
+case "dns-probe":
+    // Keşif zincirinin hangi halkası kopuk: browse → resolve → A kaydı. Her adım yazdırılır.
+    let found = DnsSdBrowser.resolve(type: TvDiscovery.serviceType,
+                                     seconds: Double(num("--seconds", 4)), notes: { print($0) })
+    print("çözülen servis: \(found.count)")
+    for e in found { print("  \(e.instance) → \(e.host):\(e.port)") }
     exit(0)
 
 case "list-pairs":

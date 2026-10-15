@@ -63,7 +63,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         log("Hoş geldin. Soldan pencere, sağdan TV seç — yayın sırasında pencere değişirse akış yerinde değişir.")
         Task { await refreshTVs() }
         Task { await refreshWindows(keepSelection: true) }
+        WindowCapture.permissionNote = { [weak self] in self?.append($0) }
         checkPermission()
+        warnAboutCopies()
         refreshRunButton()
 
         advertised.onLog = { [weak self] in self?.append($0) }
@@ -358,14 +360,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
 
     private func deviceCell(_ row: Int) -> NSView? {
         let id = NSUserInterfaceItemIdentifier("devCell")
+        let tv = TVs[row]
+        // Aynı TV'nin eski adresi mi? (Ad aynı, şu anda canlı olan başka bir satır var.)
+        let liveTwin = TVs.contains { $0.online && $0.host != tv.host && $0.displayName == tv.displayName }
         guard let cell = deviceTable.makeView(withIdentifier: id, owner: self) as? DeviceCell,
               row < TVs.count else {
             let fresh = DeviceCell()
             fresh.identifier = id
-            fresh.fill(tv: TVs[row])
+            fresh.fill(tv: tv, liveTwin: liveTwin)
             return fresh
         }
-        cell.fill(tv: TVs[row])
+        cell.fill(tv: tv, liveTwin: liveTwin)
         return cell
     }
 
@@ -732,10 +737,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             : NSColor.tertiaryLabelColor
     }
 
+    /// Ekran Kaydı iznini bekler ve verildiği anda listeyi tazeler.
+    ///
+    /// Ölçülen kusur: tek atışlık kontrol, kullanıcı Sistem Ayarları'nda anahtarı **açtıktan
+    /// sonra da** "izin yok" diyordu (macOS anahtar değişiminde uygulamayı kapattığı için
+    /// süreç zaten ölüyordu; açık kaldığında da yeniden bakılmıyordu). Şimdi istek tetiklenir,
+    /// sonra veriliş yoklanır.
     private func checkPermission() {
-        Task {
-            do { try await WindowCapture.ensurePermission(waitSeconds: 0) }
-            catch { log("Ekran Kaydı izni henüz yok — 'Yenile' ile tekrar dene.") }
+        Task { @MainActor in
+            if await WindowCapture.isGranted() { return }
+            // Sistem izni isteği bloklayan bir çağrıdır ve pencere arkada kalabiliyor:
+            // kullanıcıya önce ne beklendiği söylenir (ölçüldü: log satırsız bekleyiş
+            // "uygulama izni okumuyor" gibi görünüyordu).
+            log("Ekran Kaydı izni isteniyor: sistem penceresi ekranda bekleyebilir, arkaya düşmüşse Sistem Ayarları → Gizlilik ve Güvenlik → Ekran Kaydı.")
+            WindowCapture.requestFromSystem()
+            if await WindowCapture.isGranted() {
+                log("Ekran Kaydı izni verildi — pencere listesi yenileniyor.")
+                await refreshWindows(keepSelection: true)
+                return
+            }
+            log("Ekran Kaydı izni bekleniyor: Sistem Ayarları → Gizlilik ve Güvenlik → Ekran Kaydı → PaneCast. Anahtarı açınca bu liste kendiliğinden dolar.")
+            if await WindowCapture.wait(forGrant: 240) {
+                log("Ekran Kaydı izni alındı — pencere listesi yenileniyor.")
+                await refreshWindows(keepSelection: true)
+            } else {
+                log("Ekran Kaydı izni hâlâ yok. Anahtarı açtıysan PaneCast'ı kapatıp yeniden aç: macOS bu izni değişince uygulamayı yeniden başlatmak isteyebiliyor.")
+            }
+        }
+    }
+
+    /// Aynı paket kimliğiyle diskte birden çok kopya ya da çalışıyor ikinci örnek var mı?
+    /// Ölçülen kusur: geliştirme kopyası (`artifacts/build`) ile kurulu kopya aynı anda
+    /// kayıtlıyken Ekran Kaydı izni hangisine verildi şaşıyor, TV'nin geri kanalı (7610) ve
+    /// yoklama kanalı (7611) çakışıyor; kullanıcı "verdiğim izni okumuyor" durumuna düşüyordu.
+    private func warnAboutCopies() {
+        guard let id = Bundle.main.bundleIdentifier else { return }
+        let paths = NSWorkspace.shared.urlsForApplications(withBundleIdentifier: id).map(\.path)
+        if paths.count > 1 {
+            log("dikkat: \(id) kimliğiyle \(paths.count) PaneCast kopyası kayıtlı — izin ve TV kanalları karışır. Tek kopyayı kullan; diğerini klasörden çıkar.")
+        }
+        let mine = ProcessInfo.processInfo.processIdentifier
+        let others = NSWorkspace.shared.runningApplications.filter {
+            $0.bundleIdentifier == id && $0.processIdentifier != mine
+        }
+        if !others.isEmpty {
+            log("dikkat: PaneCast zaten çalışıyor (pid \(others.map { String($0.processIdentifier) }.joined(separator: ", "))) — iki örnek aynı TV kanallarını paylaşamaz.")
         }
     }
 
@@ -859,17 +905,19 @@ final class DeviceCell: NSTableCellView {
         didSet { secondary.textColor = backgroundStyle == .emphasized ? .white : baseSecondaryColor }
     }
 
-    func fill(tv: DiscoveredTV) {
+    func fill(tv: DiscoveredTV, liveTwin: Bool = false) {
         let paired = KeyStore.isPaired(tv.host)
         primary.stringValue = (paired ? "✓ " : "○ ") + tv.displayName
         let renk: NSColor
         if tv.host.isEmpty {
-            secondary.stringValue = "adres yok — TV'yi ağda bulmak için Yeniden Tara'ya bas"
+            secondary.stringValue = "adres çözümlenemedi — TV'yi bul / yeniden tara'ya bas ya da adresi elle gir"
             renk = .systemRed
         } else if paired {
             secondary.stringValue = "\(tv.host):\(tv.controlPort) · eşleşmiş · "
-                + (tv.online ? "açık" : "TV'de uygulama kapalı")
-            renk = tv.online ? .systemGreen : .secondaryLabelColor
+                + (tv.online ? "açık (\(tv.source.label))"
+                             : liveTwin ? "eski adres — bu TV başka adreste açık, temizlemek için seç ve 'Eşleştirmeyi unut'a bas"
+                                        : "TV'de uygulama kapalı")
+            renk = tv.online ? .systemGreen : (liveTwin ? .systemOrange : .secondaryLabelColor)
         } else if tv.tvReportsPaired {
             // TV kendi tarafında eşleşmiş sayıyor (anahtar onun da üzerinde); Mac'te yoksa
             // akış sessizce PIN turuna düşer — nedeni satırda yazılı durur.
@@ -877,7 +925,7 @@ final class DeviceCell: NSTableCellView {
             renk = .systemOrange
         } else {
             secondary.stringValue = "\(tv.host):\(tv.controlPort) · EŞLEŞMEMİŞ · "
-                + (tv.online ? "açık — çift tıkla: PIN gir" : "kapalı")
+                + (tv.online ? "açık (\(tv.source.label)) — çift tıkla: PIN gir" : "kapalı")
             renk = tv.online ? .systemRed : .secondaryLabelColor
         }
         baseSecondaryColor = renk
