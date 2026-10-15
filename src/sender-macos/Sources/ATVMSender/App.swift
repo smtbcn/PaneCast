@@ -72,6 +72,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private var orphanWarnings: Set<String> = []
     /// "Ağda alıcı yok" uyarısı da bir kez yazılır; keşif 20 sn'de bir tekrarlıyor.
     private var warnedNoTv = false
+    /// Özet satırında kullanıcıdan gelen bir hata duruyor mu? Sebep çözülene kadar kalkmamalı,
+    /// çözüldüğünde kendiliğinden silinmeli (ölçülen kusur: hata 20 sn'de bir kayboluyordu).
+    private var summaryIsError = false
 
     private static let winColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("win"))
     private static let devColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("dev"))
@@ -295,7 +298,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         // (çipler + özet + olaylar kalır): her şeyi sıkıştırmaktansa sınır koymak okunur kalıyor.
         let compact = h < 640
         dashboard.compact = compact
-        let want = dashboard.neededHeight(forWidth: usable)
+        let want = dashboard.neededHeight(forWidth: usable) + dashboard.expandedHeight
         let dashH = min(max(compact ? 96 : 150, want), max(96, h - 296))
         let dashY: CGFloat = 14
         let controlH: CGFloat = 38
@@ -334,9 +337,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         deviceScroll.frame = NSRect(x: rightX, y: rightListBottom, width: rightW,
                                     height: max(0, rightListTop - rightListBottom))
 
-        tvModeNote.frame = NSRect(x: leftX, y: listsBottom + 96, width: leftW, height: 130)
-        screensNote.frame = NSRect(x: leftX, y: listsBottom, width: leftW, height: 88)
-        arrangeButton.frame = NSRect(x: leftX, y: listsBottom - 32, width: 200, height: 28)
+        // TV ekranı modunun sol sütunu alta doğru: düğme → ekran dökümü → açıklama.
+        // Ölçülen kusur: "Ekranları Düzenle…" düğmesi `listsBottom` altına hesaplanıp
+        // profil kutusunun üstüne biniyordu.
+        arrangeButton.frame = NSRect(x: leftX, y: listsBottom, width: 200, height: 28)
+        screensNote.frame = NSRect(x: leftX, y: listsBottom + 34, width: leftW, height: 88)
+        tvModeNote.frame = NSRect(x: leftX, y: listsBottom + 128, width: leftW,
+                                  height: max(60, listsTop - 30 - (listsBottom + 128)))
     }
 
     private func section(_ s: String, x: CGFloat, y: CGFloat, w: CGFloat) -> NSTextField {
@@ -542,6 +549,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             if let tvHost { advertised.notifyStopped(host: tvHost) }   // TV başlattıysa TV'nin kendi bağlantısından
             tvInitiatedHost = nil
             note("Yayın durduruldu, kaynaklar serbest bırakıldı")
+            dashboard.setSummary("Hazır — soldan pencere, sağdan TV seç.", .idle)
+            summaryIsError = false
             refreshRunButton()
         }
     }
@@ -552,6 +561,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         tvModeViews.forEach { $0.isHidden = !tv }
         windowHint.stringValue = tv ? "" : "Bir pencere seç; seçtiğin an yayına geçer."
         refreshScreensNote()
+        // Kaynak çipi moda göre değişiyor ("TV ekranı (ayrı ekran)"): yenilemezse çip eski
+        // pencereyi göstermeye devam ediyordu (ölçüldü).
+        refreshRunButton()
     }
 
     /// Yayın sırasında pencere değişti: akışı kesmeden yeni pencereye geç.
@@ -590,6 +602,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             setStatus("TV seçilmedi")
             windowHint.stringValue = "Sağdaki listeden bir TV seç; listesi boşsa TV'yi bul ya da adresi elle yazıp Ekle'ye bas."
             dashboard.setSummary("Başlatılamadı: hedef TV seçili değil.", .bad)
+            summaryIsError = true
             note("Başlat reddedildi: hedef TV yok (satır seçili değil ya da adresi bilinmiyor)", .error)
             return
         }
@@ -598,6 +611,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             setStatus("Pencere seçilmedi")
             windowHint.stringValue = "Soldaki listeden yayınlanacak pencereyi seç."
             dashboard.setSummary("Başlatılamadı: yayınlanacak pencere seçili değil.", .bad)
+            summaryIsError = true
             note("Başlat reddedildi: pencere seçimi yok", .error)
             return
         }
@@ -671,6 +685,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         setStatus(title)
         windowHint.stringValue = detail
         dashboard.setSummary("\(title): \(detail)", .bad)
+        summaryIsError = true
         note("\(title): \(detail)", .error)
         refreshRunButton()
     }
@@ -836,6 +851,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         setStatus(streamNotice ?? (engine.isRunning ? "Yayında" : "Hazır"))
         modeControl.isEnabled = !engine.isRunning
         syncChips()
+        // Kullanıcı sebebi giderdi (TV + pencere seçildi) ve yayın başlamadıysa kırmızı
+        // özet kendiliğinden kalkar: uyarı çözümsüz bir gerçek gibi asılı kalmasın.
+        if summaryIsError, !engine.isRunning, selectedHost() != nil,
+           tvDisplayMode || windowTable.selectedRow >= 0 {
+            dashboard.setSummary("Hazır — soldan pencere, sağdan TV seç.", .idle)
+            summaryIsError = false
+        }
     }
 
     /// Durum çipleri seçime ve yayına göre tek yerden doldurulur: kullanıcı "neyi, nereye,
@@ -896,6 +918,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         if tvDisplayMode { refreshScreensNote() }
         setStatus(streamNotice ?? "Yayında")
         guard engine.isRunning else { return }
+        summaryIsError = false
         if let notice = streamNotice {
             dashboard.setSummary(notice, .warn)
         } else {

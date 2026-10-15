@@ -254,10 +254,13 @@ final class DashboardView: NSView {
     private let summaryLed = NSView()
     private let summaryLabel = NSTextField(labelWithString: "")
     private let toggle = NSButton()
-    private let feedScroll = NSScrollView()
-    private let feedStack = NSStackView()
+    /// Olay satırları: kaydırma yerine panonun kalan yüksekliğine sığan kadarı elle dizilir.
+    /// Ölçülen kusur: scroll içinde Auto Layout'lu NSStackView, satırları sıfır yükseklikte
+    /// bırakıp listeyi görünmez yapıyordu.
+    private var rowViews: [EventRowView] = []
+    private var pendingRows: [EventRow] = []
+    private let rowHeight: CGFloat = 18
     private var feedExpanded = false
-    private let feedHeight: CGFloat = 132
 
     let chipSource = ChipView(key: "Kaynak")
     let chipTarget = ChipView(key: "Hedef")
@@ -291,25 +294,21 @@ final class DashboardView: NSView {
         summaryBar.addSubview(summaryLed); summaryBar.addSubview(summaryLabel)
         addSubview(summaryBar)
 
+        // Ölçülen kusur: `.disclosure` bezelli kenarlıksız düğme görünüyordu ama erişilebilirlik
+        // ağacında düğme olarak çıkmıyordu ve denenen tıklamalar eylemi tetiklemedi.
+        // SF Symbol ok + başlık olan normal bir düğme: tıklama alanı tüm satır, VoiceOver okur.
         toggle.isBordered = false
-        toggle.bezelStyle = .disclosure
-        toggle.setButtonType(.pushOnPushOff)
-        toggle.title = "Olaylar"
+        toggle.bezelStyle = .regularSquare
         toggle.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
         toggle.contentTintColor = .secondaryLabelColor
         toggle.target = self
         toggle.action = #selector(toggleFeed)
+        toggle.setAccessibilityLabel("Olaylar")
+        toggle.imagePosition = .imageLeading
+        toggle.toolTip = "Aynı satırlar tek satırda toplanır; tıklayınca ayrıntı listesi açılır."
+        setChevron()
         addSubview(toggle)
 
-        feedStack.orientation = .vertical
-        feedStack.spacing = 2
-        feedStack.alignment = .leading
-        feedStack.distribution = .fill
-        feedScroll.documentView = feedStack
-        feedScroll.hasVerticalScroller = true
-        feedScroll.drawsBackground = false
-        feedScroll.isHidden = true
-        addSubview(feedScroll)
         setSummary("Hazır — soldan pencere, sağdan TV seç.", .idle)
     }
 
@@ -319,9 +318,24 @@ final class DashboardView: NSView {
 
     @objc private func toggleFeed() {
         feedExpanded.toggle()
-        feedScroll.isHidden = !feedExpanded
-        if feedExpanded { wantsLayer = true }
+        // Satırlar ancak açıldığında kurulur (kapalıyken boşuna görünüm üretme).
+        reloadEvents(pendingRows, groups: pendingRows.count,
+                     lines: pendingRows.reduce(0) { $0 + $1.count })
+        setChevron()
+        // Üst görünüm yeniden dizilsin: açıkken pano daha çok yükseklik ister.
+        superview?.needsLayout = true
         needsLayout = true
+    }
+
+    /// Olay listesi açıkken panonun ek ihtiyacı — `layoutContent` pencere payını buna göre verir.
+    var expandedHeight: CGFloat { feedExpanded ? CGFloat(min(pendingRows.count, 8)) * 18 + 6 : 0 }
+
+    /// Ok işareti: kapalıyken sağa, açıkken aşağı bakar (macOS disclosure dili).
+    private func setChevron() {
+        let config = NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold)
+        toggle.image = NSImage(systemSymbolName: feedExpanded ? "chevron.down" : "chevron.right",
+                               accessibilityDescription: feedExpanded ? "olayları katla" : "olayları genişlet")?
+            .withSymbolConfiguration(config)
     }
 
     func setStats(_ s: MirrorEngine.Stats) {
@@ -349,13 +363,14 @@ final class DashboardView: NSView {
     }
 
     /// Yayın durduğunda kutular "veri bekleniyor" haline döner — sıfır değeriyle yalan söylemesin.
+    /// Özet satırına dokunmaz: ölçülen kusur, kırmızı hata mesajının bir sonraki 20 sn'lik
+    /// yenilemede kendiliğinden kaybolmasıydı (sebep kullanıcıya görünmez kalıyordu).
     func clearStats() {
         [tileFps, tileBitrate, tileLatency, tilePackets, tileHealth].forEach {
             $0.set("—", unit: "", detail: "yayın yok")
             $0.tint(.labelColor)
         }
         tileFps.resetChart(); tileBitrate.resetChart(); tileLatency.resetChart()
-        setSummary("Hazır — soldan pencere, sağdan TV seç.", .idle)
     }
 
     enum Summary { case idle, ok, warn, bad }
@@ -377,39 +392,22 @@ final class DashboardView: NSView {
         summaryLed.layer?.cornerRadius = 4
     }
 
+    private static let rowTime: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+
+    /// Olay listesini yeniden kurar. Satırlar yalnız açıkken eklenir; kapalıyken veri
+    /// bekletilir (`pendingRows`) ki açınca anında görünsün.
     func reloadEvents(_ rows: [EventRow], groups: Int, lines: Int) {
         toggle.title = rows.isEmpty ? "Olaylar" : "Olaylar — \(groups) grup, \(lines) satır"
-        feedStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        let time = DateFormatter()
-        time.dateFormat = "HH:mm"
-        for row in rows {
-            let led = NSView()
-            led.wantsLayer = true
-            led.layer?.backgroundColor = row.severity.color.cgColor
-            led.layer?.cornerRadius = 3
-            led.frame = NSRect(x: 0, y: 0, width: 7, height: 7)
-            led.widthAnchor.constraint(equalToConstant: 7).isActive = true
-            led.heightAnchor.constraint(equalToConstant: 7).isActive = true
-            let when = NSTextField(labelWithString: time.string(from: row.last))
-            when.font = NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .regular)
-            when.textColor = .tertiaryLabelColor
-            let text = NSTextField(labelWithString: row.text)
-            text.font = NSFont.systemFont(ofSize: 11.5)
-            text.textColor = row.severity == .info ? .secondaryLabelColor : .labelColor
-            text.lineBreakMode = .byTruncatingMiddle
-            text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            let count = NSTextField(labelWithString: row.count > 1 ? "×\(row.count)" : "")
-            count.font = NSFont.systemFont(ofSize: 10.5)
-            count.textColor = .tertiaryLabelColor
-            let line = NSStackView(views: [led, when, text, count])
-            line.orientation = .horizontal
-            line.spacing = 8
-            line.alignment = .centerY
-            text.widthAnchor.constraint(lessThanOrEqualToConstant: max(160, bounds.width - 220)).isActive = true
-            feedStack.addArrangedSubview(line)
-            line.widthAnchor.constraint(equalTo: feedStack.widthAnchor, constant: -4).isActive = true
-        }
-        if !feedExpanded { needsLayout = true }
+        setChevron()
+        pendingRows = rows
+        rowViews.forEach { $0.removeFromSuperview() }
+        rowViews = feedExpanded ? rows.map { EventRowView($0, time: Self.rowTime) } : []
+        rowViews.forEach { addSubview($0) }
+        needsLayout = true
     }
 
     override func layout() {
@@ -450,9 +448,15 @@ final class DashboardView: NSView {
         summaryLabel.frame = NSRect(x: 26, y: 7, width: width - 40, height: 16)
         toggle.sizeToFit()
         toggle.frame = NSRect(x: 0, y: summaryBar.frame.maxY + 6,
-                              width: max(140, toggle.frame.width + 40), height: 18)
-        feedScroll.frame = NSRect(x: 0, y: toggle.frame.maxY + 2, width: width, height: feedExpanded ? feedHeight : 0)
-        feedStack.frame = NSRect(x: 0, y: 0, width: max(width - 12, 200), height: feedStack.fittingSize.height)
+                              width: max(150, toggle.frame.width + 46), height: 18)
+        // Satırlar panonun kalan yüksekliğine sığan kadarıyla dizilir.
+        var y = toggle.frame.maxY + 2
+        for row in rowViews {
+            if y + rowHeight > bounds.maxY { row.isHidden = true; continue }
+            row.isHidden = false
+            row.frame = NSRect(x: 2, y: y, width: width - 4, height: rowHeight - 2)
+            y += rowHeight
+        }
     }
 
     /// Dar pencerede ölçü kutuları kalkar: çipler + özet + olaylar kalır.
@@ -488,5 +492,52 @@ final class DashboardView: NSView {
         // 6 üst boşluk + 8 çip satırı + kutu araları + özet + olay satırı + 14 tampon:
         // ölçüldü, tam sığdırılan yükseklikte "Olaylar" satırı kesiliyordu.
         return 14 + 30 + CGFloat(rows) * (104 + 8) + 32 + 20 + 14
+    }
+}
+
+/// Tek olay satırı: renk noktası + saat + metin + tekrar sayacı. Kendi `layout()`'u ile
+/// genişliğe uyum sağlar (ölçülen kusur: iç içe Auto Layout stack'leri satırları
+/// görünmez kılıyordu).
+final class EventRowView: NSView {
+    private let led = NSView()
+    private let timeLabel = NSTextField(labelWithString: "")
+    private let textLabel = NSTextField(labelWithString: "")
+    private let countLabel = NSTextField(labelWithString: "")
+
+    init(_ row: EventRow, time: DateFormatter) {
+        super.init(frame: .zero)
+        led.wantsLayer = true
+        led.layer?.backgroundColor = row.severity.color.cgColor
+        led.layer?.cornerRadius = 3.5
+        timeLabel.stringValue = time.string(from: row.last)
+        timeLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .regular)
+        timeLabel.textColor = .tertiaryLabelColor
+        textLabel.stringValue = row.text
+        textLabel.font = NSFont.systemFont(ofSize: 11.5)
+        textLabel.textColor = row.severity == .info ? .secondaryLabelColor : .labelColor
+        textLabel.lineBreakMode = .byTruncatingMiddle
+        countLabel.stringValue = row.count > 1 ? "×\(row.count)" : ""
+        countLabel.font = NSFont.systemFont(ofSize: 10.5, weight: .semibold)
+        countLabel.textColor = .tertiaryLabelColor
+        [led, timeLabel, textLabel, countLabel].forEach(addSubview)
+        setAccessibilityElement(true)
+        setAccessibilityLabel(row.count > 1 ? "\(row.text), \(row.count) kez" : row.text)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var isFlipped: Bool { true }
+
+    override func layout() {
+        super.layout()
+        led.frame = NSRect(x: 0, y: (bounds.height - 7) / 2, width: 7, height: 7)
+        timeLabel.frame = NSRect(x: 12, y: (bounds.height - 13) / 2, width: 36, height: 13)
+        countLabel.sizeToFit()
+        let countWidth = countLabel.frame.width
+        let countX = bounds.maxX - countWidth - 2
+        textLabel.frame = NSRect(x: 52, y: (bounds.height - 15) / 2,
+                                 width: max(40, countX - 58), height: 15)
+        countLabel.frame = NSRect(x: countX, y: (bounds.height - countLabel.frame.height) / 2,
+                                  width: countWidth, height: countLabel.frame.height)
     }
 }
