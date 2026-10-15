@@ -599,9 +599,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     }
 
     private func forgetPairing() async {
+        let manual = manualIP.stringValue.trimmingCharacters(in: .whitespaces)
         guard let host = selectedHost() else {
             windowHint.stringValue = "Sağdaki listeden eşleşmeyi kaldırmak istediğin TV'yi seç."
+            log("eşleşme unutulmadı: hedef yok (liste satırı seçili değil ya da adresi boş)")
             return
+        }
+        let name = selectedDevice()?.displayName ?? host
+        log("eşleşme kaldırılıyor: \(name) · \(host)" + (manual.isEmpty ? "" : " (adres kutusundaki değer)"))
+        // TV'nin kontrol sunucusu tek oturumlu: yayın sürerken aynı adrese açılan ikinci bağlantı
+        // bekler. Ölçülen kusur: düğme hiçbir şey yapmadan asılı kalıyor, kayıt silinmiyordu.
+        if engine.isRunning, engine.streamingHost == host || tvInitiatedHost == host {
+            log("yayın durduruluyor: kontrol kanalı boşalmadan eşleşme kaldırılamıyor")
+            await engine.stop()
+            tvInitiatedHost = nil
+            refreshRunButton()
         }
         // İki uç ayrı işler: TV'ye ulaşmak *denenir*, ama ulaşılamıyorsa bu Mac'teki kayıt
         // yine de silinmelidir. Ölçülen kusur: adres değişmiş/eski satırda `connect()` patlıyor,
@@ -615,7 +627,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             c.disconnect()
             tvForgetful = true
         } catch {
-            log("TV'ye ulaşılamadı (kapalı ya da adres değişti) — kaydı yalnız bu Mac'ten siliyorum: \(error)")
+            log("TV'ye ulaşılamadı (kapalı, adres değişmiş ya da kanal meşgul) — kaydı yalnız bu Mac'ten siliyorum: \(error)")
         }
         KeyStore.remove(host)     // Anahtar + ad kaydı; yarımkalır eşleşme bırakmamak için
         log(tvForgetful

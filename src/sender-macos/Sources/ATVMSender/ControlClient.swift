@@ -48,7 +48,11 @@ final class ControlClient: @unchecked Sendable {
 
     // ---------- bağlantı ----------
 
-    func connect() async throws {
+    /// TCP bağlantısı. **Zaman aşımı zorunlu**: TV'nin kontrol sunucusu tek oturumlu ve kabul
+    /// döngüsü yayındayken meşgul; yeni bağlantı `.waiting` durumunda süresiz bekleyebiliyor
+    /// (ölçüldü: "Eşleştirmeyi unut" yayın sürerken hiçbir şey yapmadan asılı kalıyordu —
+    /// `beginHello`'nun 8 sn zaman aşımı hiç devreye giremiyordu).
+    func connect(timeout: TimeInterval = 8) async throws {
         let conn = NWConnection(host: NWEndpoint.Host(host),
                                 port: NWEndpoint.Port(rawValue: port)!,
                                 using: .tcp)
@@ -67,6 +71,14 @@ final class ControlClient: @unchecked Sendable {
                 }
             }
             conn.start(queue: queue)
+            queue.asyncAfter(deadline: .now() + timeout) {
+                if !done {
+                    done = true
+                    conn.stateUpdateHandler = nil
+                    conn.cancel()
+                    cont.resume(throwing: ControlError.timeout)
+                }
+            }
         }
         readLoop()
     }

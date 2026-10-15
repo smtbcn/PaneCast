@@ -382,6 +382,9 @@ final class MirrorEngine {
     private var mediaHost: String = ""
 
     func setHost(_ h: String) { controlHost = h }
+    /// Şu anki/açılan yayın hedefi: TV'nin kontrol sunucusu tek oturumlu olduğu için bu adrese
+    /// yönelik işlemler (ör. eşleşmeyi unut) yayını önce durdurmalı.
+    var streamingHost: String? { controlHost.isEmpty ? nil : controlHost }
 
     private func emitStats() {
         guard let capture, let encoder, let packetizer else { return }
