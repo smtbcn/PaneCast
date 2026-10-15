@@ -527,11 +527,11 @@ class MainActivity : Activity(), ControlLink.Listener {
             alt.append("OK: bilgisayarı seç ve yayını başlat  ·  SEARCH: yeniden tara  ·  BACK: çık (basılı tut: eşleştirmeyi sil)")
         } else {
             baslik.append("EŞLEŞME BEKLENİYOR\n")
-            baslik.append("bu kodu Mac'teki PaneCast penceresine gir")
+            baslik.append("bu kodu Mac'teki Pane Cast penceresine gir")
             alt.append("SELECT: yeni PIN  ·  BACK: çık")
         }
         if (!streaming) {
-            teknik.append("PaneCast ${packageInfoVersion()}  ·  IP ${local.ifEmpty { listOf("(yok)") }.joinToString(", ")}\n")
+            teknik.append("Pane Cast ${packageInfoVersion()}  ·  IP ${local.ifEmpty { listOf("(yok)") }.joinToString(", ")}\n")
             teknik.append("kontrol tcp/${Protocol.CONTROL_PORT}  medya udp/${Protocol.MEDIA_PORT}  mDNS ${Protocol.SERVICE_TYPE}\n")
         }
         if (statusNote.isNotEmpty()) alt.append("\n").append(statusNote)

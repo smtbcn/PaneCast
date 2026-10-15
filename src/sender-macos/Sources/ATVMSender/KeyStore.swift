@@ -88,7 +88,7 @@ enum KeyStore {
         guard status == errSecItemNotFound else { return status }
         var add = query(host)
         add[kSecValueData as String] = key
-        add[kSecAttrLabel as String] = "PaneCast eşleşme anahtarı"
+        add[kSecAttrLabel as String] = "Pane Cast eşleşme anahtarı"
         return SecItemAdd(add as CFDictionary, nil)
     }
 

@@ -3,7 +3,7 @@ import AppKit
 import CoreMedia
 import CoreVideo
 
-// PaneCast macOS yayıncısı — komut satırı arayüzü.
+// Pane Cast macOS yayıncısı — komut satırı arayüzü.
 // GUI (M5) bu çekirdeğin üstüne oturur; CLI gerçek testler için kasıtlı olarak tutuluyor.
 
 let args = CommandLine.arguments
@@ -50,7 +50,7 @@ func die(_ msg: String) -> Never {
 func usage() -> Never {
     emit("komut yok veya hatalı; argümanlar: \(args.joined(separator: " "))")
     print("""
-    PaneCast yayıncısı
+    Pane Cast yayıncısı
 
       atvm-sender gui                        # arayüzü aç (çift tıklamayla da açılır)
       atvm-sender list-tvs
@@ -101,7 +101,7 @@ case "unpair":
 
 case "list-tvs":
     let tvs = await TvDiscovery.browse(seconds: Double(num("--seconds", 3)))
-    if tvs.isEmpty { print("yerel ağda PaneCast alıcısı bulunamadı (TV'de uygulamayı açın)") }
+    if tvs.isEmpty { print("yerel ağda Pane Cast alıcısı bulunamadı (TV'de uygulamayı açın)") }
     for t in tvs { print(t) }
     exit(0)
 
@@ -259,7 +259,7 @@ case "mirror":
     let windows: [WindowInfo]
     do { windows = sourceKind == "synthetic" ? [] : try await WindowCapture.shareableWindows() }
     catch let e as CaptureError {
-        die(e.description + "\n→ Sistem Ayarları → Gizlilik ve Güvenlik → Ekran Kaydı → 'PaneCast'")
+        die(e.description + "\n→ Sistem Ayarları → Gizlilik ve Güvenlik → Ekran Kaydı → 'Pane Cast'")
     }
     catch { die("\(error)") }
 

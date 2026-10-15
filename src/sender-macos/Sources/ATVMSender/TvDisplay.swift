@@ -10,7 +10,7 @@ import CVirtualDisplay
 /// konuşulur; ayrıca günlük AppKit'e dokunuyor (ana iş parçası dışında çöküyor — ölçüldü).
 @MainActor
 final class TvDisplay {
-    static let name = "PaneCast TV"
+    static let name = "Pane Cast TV"
     static let width = 1920, height = 1080
 
     private let virtual: PCVirtualDisplay

@@ -1,10 +1,17 @@
 import AppKit
 import CoreGraphics
 
-/// PaneCast macOS arayüzü.
+/// Pane Cast macOS arayüzü.
 ///
-/// Düzen: solda yayınlanacak pencereler (arama + simge listesi), sağda hedef TV'ler
-/// (kayıtlı/eşleşmiş), altta kalite + Başlat/Durdur + canlı ölçüm şeridi, en altta günlük.
+/// Düzen: sabit başlık sırası + kaydırılabilir gövde. Gövdede solda yayınlanacak pencere
+/// listesi (arama sırası + liste + kalite/Başlat sırası), sağda hedef TV listesi (adres sırası +
+/// liste + tarama/eşleşme sırası), altta iki sütunun da ortak kullandığı ipucu satırı ve pano.
+/// İki sütun **aynı ızgarayı** paylaşır: arama sırası ile adres sırası, bölüm etiketleri,
+/// listelerin üst ve alt kenarları, ikişer kontrol satırı hep hizalıdır (kullanıcı isteği:
+/// "hepsi birbirine orantılsın"). TV ekranı modunda sol sütunun liste alanı aynı çerçevede
+/// ekran haritası paneline dönüşür. "Olaylar" pano içinde açılmaz: ayrı bir ekrandır.
+/// Pencere küçültüldüğünde gövde sabit bir alt boyutun altına inmez, dikey + yatay
+/// kaydırma çubukları çıkar (kullanıcı isteği: "kullanıcı kaydıramıyor içeriği").
 /// Pencere seçimi yayın sırasında değişirse akış kesilmeden yeni pencereye geçer.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
@@ -24,13 +31,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private let startStop = NSButton()
     private let manualIP = NSTextField(string: "")
     /// Alt bölgenin panosu: durum çipleri, ölçü kutuları + mini grafikler, tek satır özet,
-    /// katlanmış olaylar. Metin duvarının yerine geçer (kullanıcı isteği + Apple "Charting data").
+    /// olaylar düğmesi. Metin duvarının yerine geçer (kullanıcı isteği + Apple "Charting data").
     private let dashboard = DashboardView(frame: .zero)
+    /// Olay ekranı: panodaki düğme bunu açar; üstte elzem durum, altta tam liste.
+    private let eventsPage = EventsPageView(frame: .zero)
+    /// Gövdenin kaydırma kapsayıcısı ve içindeki ızgara.
+    private let bodyScroll = NSScrollView()
+    private let board = LayoutView(frame: .zero)
     /// Arayüz olay defteri: aynı satır ×N olarak katlanır. Ham satırlar yine günlük dosyasına yazılır.
     private let events = EventBook()
     /// Pencere yeniden boyutlandığında çerçeveleri baştan hesaplayan kök görünüm.
-    private var root: RootView!
-    private var titleLabel = NSTextField(labelWithString: "PaneCast")
+    private var root: LayoutView!
+    private var titleLabel = NSTextField(labelWithString: "Pane Cast")
     private var windowSection = NSTextField(labelWithString: "")
     private var deviceSection = NSTextField(labelWithString: "")
     private var refreshButton = NSButton()
@@ -43,18 +55,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private let windowHint = NSTextField(labelWithString: "")
     private let modeControl = NSSegmentedControl(labels: ["Pencere", "TV ekranı (ayrı ekran)"],
                                                  trackingMode: .selectOne, target: nil, action: nil)
-    private let tvModeNote = NSTextField(wrappingLabelWithString:
-        "Mac'te TV boyutunda AYRI bir ekran açılır; oraya taşıdığın pencereler ve sesler TV'de oynar. "
-        + "Kendi ekranlarında ne açarsan aç, TV yayını kopmaz.\n\n"
-        + "Sistem Ayarları → Masaüstü ve Dock → \"Ekranların ayrı Space'leri var\" açık kalmalı.")
-    /// TV ekranı modunda Mac'teki ekranların gerçek dizilimi: "yeni ekran sağda mı solda mı"
-    /// kullanıcı tahmin etmesin.
-    private let screensNote = NSTextField(wrappingLabelWithString: "")
+    /// TV ekranı modunun sol sütunu: ekran haritası + açıklama (boş metin bloğu değil).
+    private let tvPanel = TVScreenPanelView(frame: .zero)
     /// Yalnız TV ekranı modunda görünen görünümler.
     private var tvModeViews: [NSView] = []
     /// Pencere listesi modunda görünen, TV ekranı modunda gizlenen görünümler.
     private var windowModeViews: [NSView] = []
     private var tvDisplayMode: Bool { modeControl.selectedSegment == 1 }
+    /// Olay ekranı açık mı (gövde o sırada gizli).
+    private var showingEvents = false
 
     private var TVs: [DiscoveredTV] = []
     private var windows: [WindowInfo] = []
@@ -75,6 +84,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     /// Özet satırında kullanıcıdan gelen bir hata duruyor mu? Sebep çözülene kadar kalkmamalı,
     /// çözüldüğünde kendiliğinden silinmeli (ölçülen kusur: hata 20 sn'de bir kayboluyordu).
     private var summaryIsError = false
+    /// Olay ekranındaki "elzem" satırı için son ölçüm (yayın durunca sıfırlanmaz, etiket düşer).
+    private var lastStats: MirrorEngine.Stats?
 
     private static let winColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("win"))
     private static let devColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("dev"))
@@ -145,15 +156,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
 
     // ---------- arayüz ----------
 
+    /// Izgaranın sabitleri: tek yerde dursun ki "orantısız" şikâyeti tekrar doğmasın.
+    private enum Grid {
+        static let pad: CGFloat = 16          // gövde kenar boşluğu
+        static let gap: CGFloat = 16          // iki sütun arası
+        static let maxContent: CGFloat = 1240 // bu genişlikten sonra içerik ortalanır
+        static let toolbarH: CGFloat = 28
+        static let sectionH: CGFloat = 16
+        static let listMinH: CGFloat = 170
+        static let bandRow1H: CGFloat = 30
+        static let bandRow2H: CGFloat = 34
+        static let hintH: CGFloat = 34
+        static let headerH: CGFloat = 46
+        /// Liste hariç sabit dikey maliyet: üst bloklar (76) + alt bloklar (142) + pad (16).
+        static let fixedH: CGFloat = 76 + 142 + 16
+        static let boardMinW: CGFloat = 700
+        /// Kaydırma çubukları için ayrılan pay: çubuk çıktığında içerik çubuğun altında kalmasın.
+        static let gutter: CGFloat = 16
+    }
+
     private func buildUI() {
-        let content = RootView(frame: NSRect(x: 0, y: 0, width: 900, height: 760))
+        let content = LayoutView(frame: NSRect(x: 0, y: 0, width: 1180, height: 760))
         root = content
-        content.onLayout = { [weak self] size in self?.layoutContent(size) }
+        content.onLayout = { [weak self] size in self?.layoutRoot(size) }
 
         titleLabel.font = NSFont.systemFont(ofSize: 17, weight: .semibold)
         content.addSubview(titleLabel)
 
-        statusPill.frame = NSRect(x: 700, y: 622, width: 180, height: 24)
         statusPill.wantsLayer = true
         statusPill.layer?.cornerRadius = 12
         statusText.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
@@ -170,89 +199,88 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         ])
         content.addSubview(statusPill)
 
-        modeControl.frame = NSRect(x: 140, y: 619, width: 340, height: 26)
         modeControl.selectedSegment = 0
         modeControl.target = self
         modeControl.action = #selector(modeChanged)
         content.addSubview(modeControl)
 
-        windowSection = section("Yayınlanacak pencere", x: 20, y: 588, w: 400)
-        content.addSubview(windowSection)
-        search.frame = NSRect(x: 20, y: 552, width: 424, height: 26)
+        // ---------- gövde: kaydırılabilir ızgara ----------
+        bodyScroll.hasVerticalScroller = true
+        bodyScroll.hasHorizontalScroller = true
+        bodyScroll.autohidesScrollers = true
+        // Overlay çubuk yerine gerçek (legacy) çubuk: kullanıcı "kaydırma çubuğu istiyorum" dedi;
+        // overlay çubuğu yalnız imleç üzerinde görünüyordu.
+        bodyScroll.scrollerStyle = .legacy
+        bodyScroll.borderType = .noBorder
+        bodyScroll.drawsBackground = false
+        bodyScroll.documentView = board
+        content.addSubview(bodyScroll)
+
+        windowSection = section("Yayınlanacak pencere")
+        board.addSubview(windowSection)
         search.placeholderString = "uygulama veya pencere ara"
         search.delegate = self
         search.target = self
         search.action = #selector(filterChanged)
-        content.addSubview(search)
-        refreshButton = button("Yenile", x: 452, y: 550, w: 88) { [weak self] in
+        board.addSubview(search)
+        refreshButton = button("Yenile") { [weak self] in
             Task { await self?.refreshWindows(keepSelection: false) }
         }
-        content.addSubview(refreshButton)
+        board.addSubview(refreshButton)
 
-        configureTable(windowTable, column: Self.winColumn, width: 520)
+        configureTable(windowTable, column: Self.winColumn, width: 380)
         windowScroll.hasVerticalScroller = true
         windowScroll.borderType = .bezelBorder
         windowScroll.documentView = windowTable
-        content.addSubview(windowScroll)
+        board.addSubview(windowScroll)
         windowModeViews = [windowSection, search, refreshButton, windowScroll]
 
-        tvModeNote.frame = NSRect(x: 20, y: 400, width: 520, height: 130)
-        tvModeNote.font = NSFont.systemFont(ofSize: 13)
-        tvModeNote.textColor = .secondaryLabelColor
-        tvModeNote.isHidden = true
-        content.addSubview(tvModeNote)
-
-        screensNote.frame = NSRect(x: 20, y: 288, width: 520, height: 104)
-        screensNote.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        screensNote.textColor = .secondaryLabelColor
-        screensNote.isHidden = true
-        content.addSubview(screensNote)
-        arrangeButton = button("Ekranları Düzenle…", x: 20, y: 252, w: 200) {
+        // TV ekranı modu: aynı çerçevede panel (harita + açıklama) + araç sırasına hizalı düğme.
+        arrangeButton = button("Ekranları Düzenle…") {
             if let url = URL(string: "x-apple.systempreferences:com.apple.Displays-Settings.extension") {
                 NSWorkspace.shared.open(url)
             }
         }
         arrangeButton.isHidden = true
-        content.addSubview(arrangeButton)
-        tvModeViews = [tvModeNote, screensNote, arrangeButton]
+        board.addSubview(arrangeButton)
+        tvPanel.isHidden = true
+        board.addSubview(tvPanel)
+        tvModeViews = [tvPanel, arrangeButton]
         refreshScreensNote()
 
-        deviceSection = section("Hedef TV — ağdaki cihazlar · çift tıkla: PIN ile eşleştir", x: 560, y: 588, w: 320)
-        content.addSubview(deviceSection)
-        configureTable(deviceTable, column: Self.devColumn, width: 300)
+        deviceSection = section("Hedef TV — ağdaki cihazlar · çift tıkla: PIN ile eşleştir")
+        board.addSubview(deviceSection)
+        configureTable(deviceTable, column: Self.devColumn, width: 260)
         deviceScroll.hasVerticalScroller = true
         deviceScroll.borderType = .bezelBorder
         deviceScroll.documentView = deviceTable
-        content.addSubview(deviceScroll)
+        board.addSubview(deviceScroll)
 
-        findButton = button("TV'yi bul / yeniden tara", x: 560, y: 368, w: 320) { [weak self] in
+        findButton = button("TV'yi bul / yeniden tara") { [weak self] in
             Task { await self?.refreshTVs() }
         }
-        content.addSubview(findButton)
-        manualIP.frame = NSRect(x: 560, y: 334, width: 216, height: 24)
+        board.addSubview(findButton)
         manualIP.placeholderString = "TV adresi (192.168.·)"
-        content.addSubview(manualIP)
-        addButton = button("Ekle", x: 784, y: 332, w: 96) { [weak self] in
+        board.addSubview(manualIP)
+        addButton = button("Ekle") { [weak self] in
             self?.addManualDevice()
         }
-        content.addSubview(addButton)
-        forgetButton = button("Eşleştirmeyi unut", x: 560, y: 298, w: 320, h: 26) { [weak self] in
+        board.addSubview(addButton)
+        forgetButton = button("Eşleştirmeyi unut") { [weak self] in
             Task { await self?.forgetPairing() }
         }
-        content.addSubview(forgetButton)
-        windowHint.frame = NSRect(x: 560, y: 250, width: 320, height: 44)
+        board.addSubview(forgetButton)
         windowHint.font = NSFont.systemFont(ofSize: 11)
         windowHint.textColor = .secondaryLabelColor
-        windowHint.maximumNumberOfLines = 3
+        windowHint.maximumNumberOfLines = 2
         windowHint.lineBreakMode = .byWordWrapping
-        content.addSubview(windowHint)
+        board.addSubview(windowHint)
 
-        profilePopup.frame = NSRect(x: 20, y: 208, width: 200, height: 26)
         profilePopup.addItems(withTitles: ["1080p60 (12 Mbps)", "1080p30 (8 Mbps)", "720p60 (6 Mbps)"])
-        content.addSubview(profilePopup)
+        profilePopup.target = self
+        profilePopup.action = #selector(profileChanged)
+        board.addSubview(profilePopup)
 
-
-        startStop.frame = NSRect(x: 236, y: 202, width: 304, height: 38)
         // Bezel yerine kendi zemin rengimiz: durum renk olarak anında okunsun (yeşil/kırmızı).
         startStop.isBordered = false
         startStop.bezelStyle = .regularSquare
@@ -261,96 +289,165 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         startStop.keyEquivalent = "\r"
         startStop.target = self
         startStop.action = #selector(toggleRun)
-        content.addSubview(startStop)
+        board.addSubview(startStop)
         setRunTitle("Başlat")
 
-        content.addSubview(dashboard)
+        board.addSubview(dashboard)
         dashboard.clearStats()
+        dashboard.onOpenEvents = { [weak self] in self?.setEventsShown(true) }
 
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 760),
+        eventsPage.isHidden = true
+        eventsPage.onBack = { [weak self] in self?.setEventsShown(false) }
+        eventsPage.onClear = { [weak self] in
+            guard let self else { return }
+            self.events.clear()
+            self.dashboard.reloadEvents(self.events.rows, groups: 0, lines: 0)
+            self.refreshEventsPage()
+        }
+        eventsPage.onOpenLog = {
+            // Katlamasız ham satırlar: arayüz grubunun kaynağı dosyada durur.
+            NSWorkspace.shared.open(logFile)
+        }
+        content.addSubview(eventsPage)
+
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
                           backing: .buffered, defer: false)
-        window.title = "PaneCast"
+        window.title = "Pane Cast"
         window.contentView = content
-        // Sınırlar: 780×600'nin altına inmez — o boyutta pano iki satıra düşer ve listeler
-        // hâlâ okunur; üst sınır yok, `layoutContent` 1240 px'ten sonra içeriği ortalar.
-        window.minSize = NSSize(width: 780, height: 600)
+        // Gövde artık kaydırılabiliyor: pencere alt sınırı ızgaranın alt sınırından küçük olabilir,
+        // böylece küçük ekranda dikey + yatay çubuklar gerçekten çıkar (kullanıcı isteği).
+        window.minSize = NSSize(width: 560, height: 440)
         placeOnCursorScreen()
         window.makeKeyAndOrderFront(nil)
     }
 
-    /// Pencere boyutuna göre tüm çerçeveleri baştan hesaplar.
-    ///
-    /// Ölçülen kusur: eskiden tek bir `autoresizingMask` dışında bir düzen kuralı yoktu; pencere
-    /// büyütülünce listeler yerinde kalıp sağda/altta kullanılmayan boşluk oluşuyordu,
-    /// küçültülünce de öğeler taşabiliyordu. Şimdi her boyutta iki sütun + kontrol satırı + pano
-    /// yeniden hesaplanır; 1240 px'ten geniş pencerede içerik ortalanır (uzayıp seyrelmesin).
-    private func layoutContent(_ size: NSSize) {
-        let w = size.width, h = size.height
-        let inset = max(20, (w - 1240) / 2)
-        let gap: CGFloat = 16
-        let usable = max(360, w - 2 * inset)
-        let leftW = max(280, (usable - gap) * 0.58)
-        let rightW = max(220, usable - gap - leftW)
-        let leftX = inset, rightX = inset + leftW + gap
-
-        // Pano yüksekliği içerikten hesaplanır. 640 px'ın altında ölçü kutuları kalkar
-        // (çipler + özet + olaylar kalır): her şeyi sıkıştırmaktansa sınır koymak okunur kalıyor.
-        let compact = h < 640
-        dashboard.compact = compact
-        let want = dashboard.neededHeight(forWidth: usable) + dashboard.expandedHeight
-        let dashH = min(max(compact ? 96 : 150, want), max(96, h - 296))
-        let dashY: CGFloat = 14
-        let controlH: CGFloat = 38
-        let controlsY = dashY + dashH + 12
-        let listsBottom = controlsY + controlH + 12
-        let listsTop = h - 100
-
-        dashboard.frame = NSRect(x: inset, y: dashY, width: usable, height: dashH)
-
-        titleLabel.frame = NSRect(x: leftX, y: h - 40, width: 110, height: 26)
-        statusPill.frame = NSRect(x: w - inset - 180, y: h - 38, width: 180, height: 24)
-        modeControl.frame = NSRect(x: leftX + 118, y: h - 39, width: min(340, max(180, usable - 340)), height: 26)
-
-        windowSection.frame = NSRect(x: leftX, y: h - 68, width: leftW, height: 16)
-        let searchW = max(120, leftW - 96)
-        search.frame = NSRect(x: leftX, y: listsTop, width: searchW, height: 26)
-        refreshButton.frame = NSRect(x: leftX + searchW + 8, y: listsTop - 2, width: 88, height: 28)
-        windowScroll.frame = NSRect(x: leftX, y: listsBottom, width: leftW,
-                                    height: max(70, listsTop - 30 - listsBottom))
-
-        profilePopup.frame = NSRect(x: leftX, y: controlsY + 6, width: 200, height: 26)
-        startStop.frame = NSRect(x: leftX + 216, y: controlsY, width: max(160, leftW - 216), height: controlH)
-
-        // Sağ sütun alta doğru kurulur: ipucu → eşleştirmeyi unut → adres+ekle → tara → liste.
-        var ry = controlsY
-        windowHint.frame = NSRect(x: rightX, y: ry, width: rightW, height: 40); ry += 44
-        forgetButton.frame = NSRect(x: rightX, y: ry, width: rightW, height: 26); ry += 30
-        manualIP.frame = NSRect(x: rightX, y: ry + 1, width: max(110, rightW - 104), height: 24)
-        addButton.frame = NSRect(x: rightX + rightW - 92, y: ry - 1, width: 92, height: 28); ry += 32
-        findButton.frame = NSRect(x: rightX, y: ry, width: rightW, height: 28); ry += 32
-        deviceSection.frame = NSRect(x: rightX, y: h - 68, width: rightW, height: 16)
-        // Liste üstü soldaki listeyle aynı hizada; yükseklik artan yerden hesaplanır.
-        // Ölçülen kusur: sabit "en az 70 px" kuralı dar pencerede listeyi bölüm etiketinin üstüne çıkarıyordu.
-        let rightListTop = listsTop - 30
-        let rightListBottom = max(listsBottom, min(ry, rightListTop - 44))
-        deviceScroll.frame = NSRect(x: rightX, y: rightListBottom, width: rightW,
-                                    height: max(0, rightListTop - rightListBottom))
-
-        // TV ekranı modunun sol sütunu alta doğru: düğme → ekran dökümü → açıklama.
-        // Ölçülen kusur: "Ekranları Düzenle…" düğmesi `listsBottom` altına hesaplanıp
-        // profil kutusunun üstüne biniyordu.
-        arrangeButton.frame = NSRect(x: leftX, y: listsBottom, width: 200, height: 28)
-        screensNote.frame = NSRect(x: leftX, y: listsBottom + 34, width: leftW, height: 88)
-        tvModeNote.frame = NSRect(x: leftX, y: listsBottom + 128, width: leftW,
-                                  height: max(60, listsTop - 30 - (listsBottom + 128)))
+    /// Gövde ızgarasının **inmesi gereken** en küçük yükseklik: iki sütun listesi okunur
+    /// kalırken pano katışık hâle düşer (ölçü kutuları kalkar).
+    private func boardMinHeight(forWidth width: CGFloat) -> CGFloat {
+        let usable = max(360, min(Grid.maxContent, width) - 2 * Grid.pad)
+        return Grid.fixedH + Grid.listMinH
+            + DashboardView.requiredHeight(width: usable, tileH: 0, tiles: 0)
     }
 
-    private func section(_ s: String, x: CGFloat, y: CGFloat, w: CGFloat) -> NSTextField {
+    /// Başlık sırası + gövde kaydırıcısı + olay ekranı: pencere boyutundan ızgara boyutunu üretir.
+    private func layoutRoot(_ size: NSSize) {
+        let w = size.width, h = size.height
+        let inset = max(Grid.pad, (w - Grid.maxContent) / 2)
+        titleLabel.sizeToFit()
+        let titleW = max(96, titleLabel.frame.width + 8)
+        titleLabel.frame = NSRect(x: inset, y: 10, width: titleW, height: 26)
+        let modeW = min(330, max(180, w - 2 * inset - titleW - 200))
+        modeControl.frame = NSRect(x: inset + titleW + 12, y: 10, width: modeW, height: 26)
+        statusPill.frame = NSRect(x: w - inset - 180, y: 12, width: 180, height: 24)
+
+        let availW = w
+        let availH = max(80, h - Grid.headerH)
+        bodyScroll.frame = NSRect(x: 0, y: Grid.headerH, width: availW, height: availH)
+        eventsPage.frame = bodyScroll.frame
+        // Çubuk payını düşerek hesapla: çubuk çıktığında içerik onun altında kalmasın.
+        let docW = max(Grid.boardMinW, availW - Grid.gutter)
+        let docH = max(boardMinHeight(forWidth: docW), availH - Grid.gutter)
+        board.frame = NSRect(x: 0, y: 0, width: docW, height: docH)
+        layoutBoard(NSSize(width: docW, height: docH))
+    }
+
+    /// Pencere boyutuna göre tüm çerçeveleri baştan hesaplar.
+    ///
+    /// Ölçülen kusur: eskiden sütunlar ve satırlar ayrı ayrı sabit koordinatlarla konuyordu;
+    /// arama kutusu ile sağdaki adres kutusu, iki listenin alt kenarı ve "Ekranları Düzenle…"
+    /// düğmesi birbirine uymuyordu. Şimdi tek bir satır sırası iki sütuna birden uygulanır:
+    /// araç sırası → bölüm etiketi → liste (eşit üst/alt) → iki kontrol satırı → ortak ipucu → pano.
+    private func layoutBoard(_ size: NSSize) {
+        let w = size.width, h = size.height
+        let inset = max(Grid.pad, (w - Grid.maxContent) / 2)
+        let usable = max(360, w - 2 * inset)
+        let leftW = max(300, ((usable - Grid.gap) * 0.58).rounded())
+        let rightW = max(230, usable - Grid.gap - leftW)
+        let leftX = inset, rightX = inset + leftW + Grid.gap
+
+        // Pano yüksekliği içerikten gelir; kalan yer listelere dağıtılır.
+        // Sığmazsa önce grafik çizgisi düşer, sonra ölçü kutuları tamamen kalkar.
+        let space = max(Grid.listMinH, h - Grid.fixedH)     // liste + pano
+        let needFull = DashboardView.requiredHeight(width: usable, tileH: DashboardView.tileHeight, tiles: 5)
+        let needShort = DashboardView.requiredHeight(width: usable, tileH: DashboardView.shortTileHeight, tiles: 5)
+        dashboard.compact = space - Grid.listMinH < needShort
+        dashboard.compactTiles = !dashboard.compact && space - Grid.listMinH < needFull
+        // Yüksekliği panonun kendi hesabından al: karar ile çerçeve aynı kaynaktan gelsin.
+        let dashH = dashboard.neededHeight(forWidth: usable)
+        let listH = max(Grid.listMinH, space - dashH)
+
+        let toolbarY: CGFloat = Grid.pad
+        let sectionY = toolbarY + Grid.toolbarH + 10
+        let listTop = sectionY + Grid.sectionH + 6
+        let bandY = listTop + listH + 12
+        let hintY = bandY + Grid.bandRow1H + 8 + Grid.bandRow2H + 10
+        let dashY = hintY + Grid.hintH + 14
+
+        // ---- sol sütun (pencere listesi) / TV ekranı paneli ----
+        windowSection.frame = NSRect(x: leftX, y: sectionY, width: leftW, height: Grid.sectionH)
+        let refreshW: CGFloat = 88
+        search.frame = NSRect(x: leftX, y: toolbarY, width: max(120, leftW - refreshW - 8), height: Grid.toolbarH)
+        refreshButton.frame = NSRect(x: leftX + leftW - refreshW, y: toolbarY, width: refreshW, height: Grid.toolbarH)
+        windowScroll.frame = NSRect(x: leftX, y: listTop, width: leftW, height: listH)
+
+        // TV ekranı modunda araç sırası boş kalmasın: düğme arama sırasıyla **aynı** satırda.
+        arrangeButton.frame = NSRect(x: leftX, y: toolbarY, width: leftW, height: Grid.toolbarH)
+        // Panel, pencere listesiyle birebir aynı çerçeveyi kaplar → kenarlar her boyutta hizalı.
+        tvPanel.frame = NSRect(x: leftX, y: listTop, width: leftW, height: listH)
+
+        profilePopup.frame = NSRect(x: leftX, y: bandY + 1, width: min(220, leftW), height: 26)
+        startStop.frame = NSRect(x: leftX, y: bandY + Grid.bandRow1H + 8, width: leftW, height: Grid.bandRow2H)
+
+        // ---- sağ sütun (hedef TV) ----
+        deviceSection.frame = NSRect(x: rightX, y: sectionY, width: rightW, height: Grid.sectionH)
+        let addW: CGFloat = 92
+        manualIP.frame = NSRect(x: rightX, y: toolbarY + 1, width: max(110, rightW - addW - 8), height: 26)
+        addButton.frame = NSRect(x: rightX + rightW - addW, y: toolbarY, width: addW, height: Grid.toolbarH)
+        deviceScroll.frame = NSRect(x: rightX, y: listTop, width: rightW, height: listH)
+        findButton.frame = NSRect(x: rightX, y: bandY, width: rightW, height: Grid.bandRow1H)
+        forgetButton.frame = NSRect(x: rightX, y: bandY + Grid.bandRow1H + 8, width: rightW, height: Grid.bandRow2H)
+
+        // ---- iki sütunun ortak satırları ----
+        windowHint.frame = NSRect(x: leftX, y: hintY, width: usable, height: Grid.hintH)
+        dashboard.frame = NSRect(x: leftX, y: dashY, width: usable, height: dashH)
+    }
+
+    // ---------- olay ekranı ----------
+
+    private func setEventsShown(_ on: Bool) {
+        showingEvents = on
+        eventsPage.isHidden = !on
+        bodyScroll.isHidden = on
+        refreshEventsPage(resetScroll: true)
+        if on { window.makeFirstResponder(window.contentView) }
+    }
+
+    /// Elzem bilgiler üstte: rozetteki durum + kanal + son ölçüm + ham günlük yolu.
+    private func refreshEventsPage(resetScroll: Bool = false) {
+        guard showingEvents else { return }
+        let channel = profilePopup.titleOfSelectedItem ?? "—"
+        let measured: String
+        if let s = lastStats, engine.isRunning {
+            // Ölçülen kusur: `String(format:)` içinde "%RTP" yazılıp bozuk dönüşüm olarak
+            // yorumlandı ve sayılar kaydı. Biçimlendirme yalnız sayılarda, metin araya girdi.
+            measured = String(format: "%.1f fps · %.1f Mbps", s.fps, s.mbps)
+                + " · \(DashboardView.grouped(s.packets)) RTP paket · kayıp \(s.nackRequests + s.dropped)"
+        } else {
+            measured = "ölçüm yok — yayın değil"
+        }
+        let status = "\(statusText.stringValue) · \(channel) · \(measured)"
+        let counts = "Özet: \(dashboard.summaryText) · \(events.groupCount) grup · \(events.lineCount) olay satırı"
+        eventsPage.openLog.toolTip = "Ham günlük: \(logFile.path)"
+        eventsPage.show(rows: events.rows, status: status, counts: counts,
+                        tone: dashboard.summaryTone, resetScroll: resetScroll)
+    }
+
+    private func section(_ s: String) -> NSTextField {
         let l = NSTextField(labelWithString: s)
         l.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
         l.textColor = .secondaryLabelColor
-        l.frame = NSRect(x: x, y: y, width: w, height: 16)
+        l.lineBreakMode = .byTruncatingTail
         return l
     }
 
@@ -370,23 +467,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         table.style = .plain
     }
 
-    /// Pencereyi imlecin olduğu ekrana ortalar. `window.center()` çok ekranlı
-    /// düzende pencereyi görünmeyen ikincil ekrana bırakabiliyordu
+    /// Pencereyi imlecin olduğu ekrana ortalar ve ekranın görünür alanına sığdırır.
+    /// `window.center()` çok ekranlı düzende pencereyi görünmeyen ikincil ekrana bırakabiliyordu
     /// (ölçüldü: çerçeve x=2055, y=-250 → kullanıcı arayüzü göremedi).
     private func placeOnCursorScreen() {
         let point = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(point, $0.frame, false) } ?? NSScreen.main
         guard let screen else { return }
         let vis = screen.visibleFrame
-        let size = window.frame.size
+        // Ekran küçükse pencereyi görünür alana sığdır: gövde zaten kaydırılıyor, ama
+        // başlık sırası / Dock çizgisi kesilmesin.
+        let size = NSSize(width: min(window.frame.width, vis.width - 32),
+                          height: min(window.frame.height, vis.height - 32))
+        window.setContentSize(size)
         let x = max(vis.minX, min(vis.midX - size.width / 2, vis.maxX - size.width))
         let y = max(vis.minY, min(vis.midY - size.height / 2, vis.maxY - size.height))
         window.setFrameOrigin(NSPoint(x: x.rounded(), y: y.rounded()))
     }
 
-    private func button(_ title: String, x: CGFloat, y: CGFloat, w: CGFloat, h: CGFloat = 28,
-                        _ action: @escaping () -> Void) -> NSButton {
-        let b = NSButton(frame: NSRect(x: x, y: y, width: w, height: h))
+    private func button(_ title: String, _ action: @escaping () -> Void) -> NSButton {
+        let b = NSButton(frame: .zero)
         b.title = title
         b.bezelStyle = .rounded
         b.setAccessibilityLabel(title)
@@ -423,6 +523,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         emit(s)
         events.add(s, severity)
         dashboard.reloadEvents(events.rows, groups: events.groupCount, lines: events.lineCount)
+        refreshEventsPage()
+    }
+
+    /// Özet satırının tek yazım yeri: pano + olay ekranının üst bilgisi aynı cümleyi görsün.
+    private func setSummary(_ text: String, _ tone: DashboardView.Summary) {
+        dashboard.setSummary(text, tone)
+        refreshEventsPage()
     }
 
     // ---------- tablolar ----------
@@ -533,6 +640,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
 
     @objc private func filterChanged() { applyFilter() }
 
+    /// Kalite profili değişti: çipler ve özet yeni kanalı göstersin (yayın sırasında da okunur).
+    @objc private func profileChanged() {
+        refreshRunButton()
+        note("Kanal profili: \(profilePopup.titleOfSelectedItem ?? "—")")
+    }
+
 
     // ---------- eylemler ----------
 
@@ -549,7 +662,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             if let tvHost { advertised.notifyStopped(host: tvHost) }   // TV başlattıysa TV'nin kendi bağlantısından
             tvInitiatedHost = nil
             note("Yayın durduruldu, kaynaklar serbest bırakıldı")
-            dashboard.setSummary("Hazır — soldan pencere, sağdan TV seç.", .idle)
+            setSummary("Hazır — soldan pencere, sağdan TV seç.", .idle)
             summaryIsError = false
             refreshRunButton()
         }
@@ -601,7 +714,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         guard let host = selectedHost() else {
             setStatus("TV seçilmedi")
             windowHint.stringValue = "Sağdaki listeden bir TV seç; listesi boşsa TV'yi bul ya da adresi elle yazıp Ekle'ye bas."
-            dashboard.setSummary("Başlatılamadı: hedef TV seçili değil.", .bad)
+            setSummary("Başlatılamadı: hedef TV seçili değil.", .bad)
             summaryIsError = true
             note("Başlat reddedildi: hedef TV yok (satır seçili değil ya da adresi bilinmiyor)", .error)
             return
@@ -610,7 +723,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         guard tvDisplayMode || (row >= 0 && row < shown.count) else {
             setStatus("Pencere seçilmedi")
             windowHint.stringValue = "Soldaki listeden yayınlanacak pencereyi seç."
-            dashboard.setSummary("Başlatılamadı: yayınlanacak pencere seçili değil.", .bad)
+            setSummary("Başlatılamadı: yayınlanacak pencere seçili değil.", .bad)
             summaryIsError = true
             note("Başlat reddedildi: pencere seçimi yok", .error)
             return
@@ -684,7 +797,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private func fail(_ title: String, _ detail: String) {
         setStatus(title)
         windowHint.stringValue = detail
-        dashboard.setSummary("\(title): \(detail)", .bad)
+        setSummary("\(title): \(detail)", .bad)
         summaryIsError = true
         note("\(title): \(detail)", .error)
         refreshRunButton()
@@ -787,7 +900,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             windows = []; shown = []
             windowTable.reloadData()
             log(e.description)
-            windowHint.stringValue = "Ekran Kaydı izni gerekiyor: Sistem Ayarları → Gizlilik ve Güvenlik → Ekran Kaydı → PaneCast."
+            windowHint.stringValue = "Ekran Kaydı izni gerekiyor: Sistem Ayarları → Gizlilik ve Güvenlik → Ekran Kaydı → Pane Cast."
         } catch {
             log("pencereler alınamadı: \(error)")
         }
@@ -847,7 +960,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     /// basınca yayını durduruyordu (TV'den başlatılan akışta `startForTV` çağırdığı için görülmedi).
     private func refreshRunButton() {
         setRunTitle(engine.isRunning ? "Durdur" : "Başlat")
-        if !engine.isRunning { streamNotice = nil; dashboard.clearStats() }
+        if !engine.isRunning { streamNotice = nil; lastStats = nil; dashboard.clearStats() }
         setStatus(streamNotice ?? (engine.isRunning ? "Yayında" : "Hazır"))
         modeControl.isEnabled = !engine.isRunning
         syncChips()
@@ -855,7 +968,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         // özet kendiliğinden kalkar: uyarı çözümsüz bir gerçek gibi asılı kalmasın.
         if summaryIsError, !engine.isRunning, selectedHost() != nil,
            tvDisplayMode || windowTable.selectedRow >= 0 {
-            dashboard.setSummary("Hazır — soldan pencere, sağdan TV seç.", .idle)
+            setSummary("Hazır — soldan pencere, sağdan TV seç.", .idle)
             summaryIsError = false
         }
     }
@@ -910,22 +1023,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     /// Ekran dizilimini canlı yazar: sanal ekran açıldıkça konumu değişebiliyor.
     private func refreshScreensNote() {
         let screens = NSScreen.screens.map { ScreenLayout.Screen(name: $0.localizedName, frame: $0.frame) }
-        screensNote.stringValue = ScreenLayout.describe(screens, tvName: TvDisplay.name)
+        tvPanel.setScreens(screens, tvName: TvDisplay.name)
     }
 
     private func render(_ s: MirrorEngine.Stats) {
+        lastStats = s
         dashboard.setStats(s)
         if tvDisplayMode { refreshScreensNote() }
         setStatus(streamNotice ?? "Yayında")
+        refreshEventsPage()
         guard engine.isRunning else { return }
         summaryIsError = false
         if let notice = streamNotice {
-            dashboard.setSummary(notice, .warn)
+            setSummary(notice, .warn)
         } else {
             let trouble = s.nackRequests + s.dropped
             // "sağlam" demiyoruz: hareketsiz pencerede kare gelmez, bu arıza değil. Yalnız
             // kayıp sayısı hüküm verir.
-            dashboard.setSummary("Akış açık · \(Int(s.seconds)) sn · \(DashboardView.grouped(s.packets)) paket ·"
+            setSummary("Akış açık · \(Int(s.seconds)) sn · \(DashboardView.grouped(s.packets)) paket ·"
                                  + " kayıp \(trouble) · \(String(format: "%.1f", s.fps)) fps",
                                  trouble == 0 ? .ok : .warn)
         }
@@ -937,6 +1052,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private func setStatus(_ text: String) {
         statusText.stringValue = text
         statusPill.layer?.backgroundColor = (engine.isRunning ? NSColor.systemGreen : NSColor.systemRed).cgColor
+        refreshEventsPage()
     }
 
     /// Ekran Kaydı iznini bekler ve verildiği anda listeyi tazeler.
@@ -958,14 +1074,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                 await refreshWindows(keepSelection: true)
                 return
             }
-            note("Ekran Kaydı izni bekleniyor: Sistem Ayarları → Gizlilik ve Güvenlik → Ekran Kaydı → PaneCast", .warn)
-            dashboard.setSummary("Ekran Kaydı izni bekleniyor — anahtarı açınca liste kendiliğinden dolar.", .warn)
+            note("Ekran Kaydı izni bekleniyor: Sistem Ayarları → Gizlilik ve Güvenlik → Ekran Kaydı → Pane Cast", .warn)
+            setSummary("Ekran Kaydı izni bekleniyor — anahtarı açınca liste kendiliğinden dolar.", .warn)
             if await WindowCapture.wait(forGrant: 240) {
                 note("Ekran Kaydı izni alındı — pencere listesi yenileniyor")
-                dashboard.setSummary("Hazır — soldan pencere, sağdan TV seç.", .idle)
+                setSummary("Hazır — soldan pencere, sağdan TV seç.", .idle)
                 await refreshWindows(keepSelection: true)
             } else {
-                note("Ekran Kaydı izni hâlâ yok. Anahtarı açtıysan PaneCast'ı kapatıp yeniden aç (macOS izin değişimde uygulamayı yeniden başlatmak isteyebiliyor).", .error)
+                note("Ekran Kaydı izni hâlâ yok. Anahtarı açtıysan Pane Cast'i kapatıp yeniden aç (macOS izin değişimde uygulamayı yeniden başlatmak isteyebiliyor).", .error)
             }
         }
     }
@@ -978,14 +1094,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         guard let id = Bundle.main.bundleIdentifier else { return }
         let paths = NSWorkspace.shared.urlsForApplications(withBundleIdentifier: id).map(\.path)
         if paths.count > 1 {
-            note("\(paths.count) PaneCast kopyası kayıtlı — izin ve TV kanalları karışır. Tek kopyayı kullan; diğerini klasörden çıkar.", .warn)
+            note("\(paths.count) Pane Cast kopyası kayıtlı — izin ve TV kanalları karışır. Tek kopyayı kullan; diğerini klasörden çıkar.", .warn)
         }
         let mine = ProcessInfo.processInfo.processIdentifier
         let others = NSWorkspace.shared.runningApplications.filter {
             $0.bundleIdentifier == id && $0.processIdentifier != mine
         }
         if !others.isEmpty {
-            note("PaneCast zaten çalışıyor (pid \(others.map { String($0.processIdentifier) }.joined(separator: ", "))) — iki örnek aynı TV kanallarını paylaşamaz.", .warn)
+            note("Pane Cast zaten çalışıyor (pid \(others.map { String($0.processIdentifier) }.joined(separator: ", "))) — iki örnek aynı TV kanallarını paylaşamaz.", .warn)
         }
     }
 
@@ -1137,10 +1253,12 @@ final class DeviceCell: NSTableCellView {
     }
 }
 
-/// İçeriği taşıyan kök görünüm: pencere yeniden boyutlandığında çerçevelerin yeniden
-/// hesaplanması için bir geri çağırma verir (`layout()` AppKit'te her boyut değişiminde koşar).
-private final class RootView: NSView {
+/// İçeriği taşıyan kök / ızgara görünümü: yeniden boyutlandığında çerçevelerin baştan
+/// hesaplanması için geri çağırma verir ve üstten hesaplı koordinat kullanır (flipped),
+/// böylece satır sırası yukarıdan aşağıya okunur.
+final class LayoutView: NSView {
     var onLayout: ((NSSize) -> Void)?
+    override var isFlipped: Bool { true }
     override func layout() {
         super.layout()
         onLayout?(bounds.size)

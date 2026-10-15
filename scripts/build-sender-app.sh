@@ -79,8 +79,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <dict>
     <key>CFBundleExecutable</key>              <string>PaneCast</string>
     <key>CFBundleIdentifier</key>              <string>app.panecast.sender</string>
-    <key>CFBundleName</key>                    <string>PaneCast</string>
-    <key>CFBundleDisplayName</key>             <string>PaneCast</string>
+    <key>CFBundleName</key>                    <string>Pane Cast</string>
+    <key>CFBundleDisplayName</key>             <string>Pane Cast</string>
     <key>CFBundlePackageType</key>             <string>APPL</string>
     <key>CFBundleShortVersionString</key>      <string>$VERSION</string>
     <key>CFBundleVersion</key>                 <string>$BUILD_NUMBER</string>
@@ -90,9 +90,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleIconFile</key>                <string>AppIcon</string>
     <key>LSUIElement</key>                     <false/>
     <key>NSMainNibFile</key>                   <string></string>
-    <key>NSAudioCaptureUsageDescription</key>  <string>PaneCast captures the audio of the app you choose to play it on your TV and to mute that app on this Mac. Other apps are not captured.</string>
-    <key>NSScreenCaptureUsageDescription</key> <string>PaneCast captures the window you choose to show it full-screen on your TV. Nothing leaves your local network.</string>
-    <key>NSLocalNetworkUsageDescription</key>  <string>PaneCast finds your TV and streams the chosen window to it over your local network.</string>
+    <key>NSAudioCaptureUsageDescription</key>  <string>Pane Cast captures the audio of the app you choose to play it on your TV and to mute that app on this Mac. Other apps are not captured.</string>
+    <key>NSScreenCaptureUsageDescription</key> <string>Pane Cast captures the window you choose to show it full-screen on your TV. Nothing leaves your local network.</string>
+    <key>NSLocalNetworkUsageDescription</key>  <string>Pane Cast finds your TV and streams the chosen window to it over your local network.</string>
     <key>NSHumanReadableCopyright</key>        <string>Local-network tool. Screen content is sent only to the TV you pair with.</string>
 </dict>
 </plist>

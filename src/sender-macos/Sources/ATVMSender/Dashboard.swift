@@ -45,6 +45,9 @@ final class EventBook {
 
     var groupCount: Int { rows.count }
     var lineCount: Int { rows.reduce(0) { $0 + $1.count } }
+
+    /// "Temizle": arayüz defterini boşaltır (ham günlük dosyasına dokunmaz).
+    func clear() { rows.removeAll() }
 }
 
 /// Son örnekleri normalize çizgi halinde gösteren mini grafik (Apple: "zamanla değişen süreç").
@@ -238,8 +241,8 @@ final class MetricTile: NSView {
         valueLabel.frame = NSRect(x: 10, y: 24, width: valueLabel.frame.width + 2, height: 26)
         unitLabel.frame = NSRect(x: valueLabel.frame.maxX + 3, y: 33,
                                  width: max(20, bounds.maxX - valueLabel.frame.maxX - 14), height: 14)
-        // Dar kutuda grafik çizgisini kaybetmektense sayıyı göster: yardımcı satır üstüne çıkar.
-        spark.isHidden = bounds.width < 132
+        // Yer daraldığında grafik çizgisini kaybetmektense sayıyı göster: iki satır sığmaz.
+        spark.isHidden = bounds.width < 132 || bounds.height < 96
         detailLabel.frame = NSRect(x: 10, y: 54, width: bounds.width - 20, height: 13)
         if !spark.isHidden {
             spark.frame = NSRect(x: 10, y: 70, width: bounds.width - 20, height: max(18, bounds.height - 78))
@@ -257,14 +260,10 @@ final class DashboardView: NSView {
     private let summaryBar = NSView()
     private let summaryLed = NSView()
     private let summaryLabel = NSTextField(labelWithString: "")
-    private let toggle = NSButton()
-    /// Olay satırları: kaydırma yerine panonun kalan yüksekliğine sığan kadarı elle dizilir.
-    /// Ölçülen kusur: scroll içinde Auto Layout'lu NSStackView, satırları sıfır yükseklikte
-    /// bırakıp listeyi görünmez yapıyordu.
-    private var rowViews: [EventRowView] = []
-    private var pendingRows: [EventRow] = []
-    private let rowHeight: CGFloat = 18
-    private var feedExpanded = false
+    let eventsButton = NSButton()
+    /// Olaylar artık pano içinde açılmıyor: kullanıcı isteği üzerine ayrı bir ekran oluyor
+    /// (panonun içindeki katlanır liste gerçek tıklamayla açılmıyordu).
+    var onOpenEvents: (() -> Void)?
 
     let chipSource = ChipView(key: "Kaynak")
     let chipTarget = ChipView(key: "Hedef")
@@ -304,20 +303,17 @@ final class DashboardView: NSView {
         summaryBar.addSubview(summaryLed); summaryBar.addSubview(summaryLabel)
         addSubview(summaryBar)
 
-        // Ölçülen kusur: `.disclosure` bezelli kenarlıksız düğme görünüyordu ama erişilebilirlik
-        // ağacında düğme olarak çıkmıyordu ve denenen tıklamalar eylemi tetiklemedi.
-        // SF Symbol ok + başlık olan normal bir düğme: tıklama alanı tüm satır, VoiceOver okur.
-        toggle.isBordered = false
-        toggle.bezelStyle = .regularSquare
-        toggle.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
-        toggle.contentTintColor = .secondaryLabelColor
-        toggle.target = self
-        toggle.action = #selector(toggleFeed)
-        toggle.setAccessibilityLabel("Olaylar")
-        toggle.imagePosition = .imageLeading
-        toggle.toolTip = "Aynı satırlar tek satırda toplanır; tıklayınca ayrıntı listesi açılır."
-        setChevron()
-        addSubview(toggle)
+        // Olaylar ayrı bir ekran: pano içindeki katlanır liste gerçek tıklamayla açılmıyordu
+        // ve açılınca panonun yüksekliği yetmiyordu. Normal, kenarlıklı düğme = güvenilir tıklama.
+        eventsButton.bezelStyle = .rounded
+        eventsButton.setButtonType(.momentaryPushIn)
+        eventsButton.font = NSFont.systemFont(ofSize: 11.5, weight: .medium)
+        eventsButton.target = self
+        eventsButton.action = #selector(openEvents)
+        eventsButton.setAccessibilityLabel("Olaylar")
+        eventsButton.toolTip = "Aynı satırlar tek satırda toplanır; tam liste ayrı açılır."
+        eventsButton.title = "Olaylar"
+        addSubview(eventsButton)
 
         setSummary("Hazır — soldan pencere, sağdan TV seç.", .idle)
     }
@@ -326,27 +322,7 @@ final class DashboardView: NSView {
 
     override var isFlipped: Bool { true }
 
-    @objc private func toggleFeed() {
-        feedExpanded.toggle()
-        // Satırlar ancak açıldığında kurulur (kapalıyken boşuna görünüm üretme).
-        reloadEvents(pendingRows, groups: pendingRows.count,
-                     lines: pendingRows.reduce(0) { $0 + $1.count })
-        setChevron()
-        // Üst görünüm yeniden dizilsin: açıkken pano daha çok yükseklik ister.
-        superview?.needsLayout = true
-        needsLayout = true
-    }
-
-    /// Olay listesi açıkken panonun ek ihtiyacı — `layoutContent` pencere payını buna göre verir.
-    var expandedHeight: CGFloat { feedExpanded ? CGFloat(min(pendingRows.count, 8)) * 18 + 6 : 0 }
-
-    /// Ok işareti: kapalıyken sağa, açıkken aşağı bakar (macOS disclosure dili).
-    private func setChevron() {
-        let config = NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold)
-        toggle.image = NSImage(systemSymbolName: feedExpanded ? "chevron.down" : "chevron.right",
-                               accessibilityDescription: feedExpanded ? "olayları katla" : "olayları genişlet")?
-            .withSymbolConfiguration(config)
-    }
+    @objc private func openEvents() { onOpenEvents?() }
 
     func setStats(_ s: MirrorEngine.Stats) {
         tileFps.set(String(format: "%.1f", s.fps), unit: "fps",
@@ -385,7 +361,13 @@ final class DashboardView: NSView {
 
     enum Summary { case idle, ok, warn, bad }
 
+    /// Özet satırının metni ve tonu: olay ekranı üst bilgisi de buradan okur (tek kaynak).
+    private(set) var summaryText = ""
+    private(set) var summaryTone: Summary = .idle
+
     func setSummary(_ text: String, _ state: Summary) {
+        summaryText = text
+        summaryTone = state
         summaryLabel.stringValue = text
         let bg: NSColor
         let led: NSColor
@@ -402,21 +384,9 @@ final class DashboardView: NSView {
         summaryLed.layer?.cornerRadius = 4
     }
 
-    private static let rowTime: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm"
-        return f
-    }()
-
-    /// Olay listesini yeniden kurar. Satırlar yalnız açıkken eklenir; kapalıyken veri
-    /// bekletilir (`pendingRows`) ki açınca anında görünsün.
+    /// Düğme etiketi: grup/satır sayısı tek bakışta görünsün (liste ayrı ekranda).
     func reloadEvents(_ rows: [EventRow], groups: Int, lines: Int) {
-        toggle.title = rows.isEmpty ? "Olaylar" : "Olaylar — \(groups) grup, \(lines) satır"
-        setChevron()
-        pendingRows = rows
-        rowViews.forEach { $0.removeFromSuperview() }
-        rowViews = feedExpanded ? rows.map { EventRowView($0, time: Self.rowTime) } : []
-        rowViews.forEach { addSubview($0) }
+        eventsButton.title = rows.isEmpty ? "Olaylar" : "Olaylar — \(groups) grup, \(lines) satır"
         needsLayout = true
     }
 
@@ -439,7 +409,7 @@ final class DashboardView: NSView {
 
         let columns = Self.columns(for: width)
         let gap: CGFloat = 8
-        let tileH = Self.tileHeight(for: bounds.height)
+        let tileH = self.tileHeight
         let top = chips.frame.maxY + 8
         var contentBottom = top
         if !compact {
@@ -450,23 +420,18 @@ final class DashboardView: NSView {
                                     width: tileW, height: tileH)
             }
             let tileRows = Int(ceil(Double(tiles.count) / Double(columns)))
-            contentBottom = top + CGFloat(tileRows) * (tileH + gap) + 2
+            contentBottom = top + CGFloat(tileRows) * (tileH + gap)
         }
-        let summaryY = contentBottom
-        summaryBar.frame = NSRect(x: 0, y: summaryY, width: width, height: 30)
+        // Özet satırı ile "Olaylar" düğmesi alta yapışık tek sırada: pano büyüdükçe boşluk
+        // birikmesin, ama kutularla da çakışmasın.
+        let rowY = max(contentBottom + 8, bounds.height - 30)
+        eventsButton.sizeToFit()
+        let buttonW = max(160, eventsButton.frame.width + 26)
+        eventsButton.frame = NSRect(x: width - buttonW, y: rowY, width: buttonW, height: 30)
+        let barW = max(160, width - buttonW - 8)
+        summaryBar.frame = NSRect(x: 0, y: rowY, width: barW, height: 30)
         summaryLed.frame = NSRect(x: 10, y: 11, width: 8, height: 8)
-        summaryLabel.frame = NSRect(x: 26, y: 7, width: width - 40, height: 16)
-        toggle.sizeToFit()
-        toggle.frame = NSRect(x: 0, y: summaryBar.frame.maxY + 6,
-                              width: max(150, toggle.frame.width + 46), height: 18)
-        // Satırlar panonun kalan yüksekliğine sığan kadarıyla dizilir.
-        var y = toggle.frame.maxY + 2
-        for row in rowViews {
-            if y + rowHeight > bounds.maxY { row.isHidden = true; continue }
-            row.isHidden = false
-            row.frame = NSRect(x: 2, y: y, width: width - 4, height: rowHeight - 2)
-            y += rowHeight
-        }
+        summaryLabel.frame = NSRect(x: 26, y: 7, width: max(60, barW - 40), height: 16)
     }
 
     /// Dar pencerede ölçü kutuları kalkar: çipler + özet + olaylar kalır.
@@ -479,29 +444,48 @@ final class DashboardView: NSView {
         }
     }
 
-    /// Genişliğe göre ölçü kutusu sütun sayısı.
+    /// Kısa panoda kutular alçalır (grafik çizgisi düşer) ki listeler okunaklı kalsın.
+    var compactTiles = false {
+        didSet { if compactTiles != oldValue { needsLayout = true } }
+    }
+
+    private var tileHeight: CGFloat { compactTiles ? Self.shortTileHeight : Self.tileHeight }
+
+    /// Genişliğe göre ölçü kutusu sütun sayısı. Beş kutu ya tek satıra sığar ya 2-3 satıra
+    /// dağılır; 4 sütun 5. kutuyu yapayalnız bırakıyordu.
     static func columns(for width: CGFloat) -> Int {
         switch width {
         case ..<620: return 2
-        case ..<900: return 3
-        case ..<1150: return 4
+        case ..<820: return 3
         default: return 5
         }
     }
 
-    /// Kutu yüksekliği: yer sıkıysa grafik çizgisinden vazgeçip sayı satırına iner.
-    static func tileHeight(for boxHeight: CGFloat) -> CGFloat { boxHeight < 300 ? 74 : 104 }
+    static let tileHeight: CGFloat = 104
+    /// Grafik çizgisi düşürülmüş kutu: yer sıkışıkken sayı + yardımcı satır sığsın.
+    static let shortTileHeight: CGFloat = 78
+    static let chipRowHeight: CGFloat = 38
+    static let summaryRowHeight: CGFloat = 38
+    static let gap: CGFloat = 8
 
-    /// Verilen genişlikte panonun ihtiyacı olan yükseklik — pencere kırpılmasın diye
-    /// `layoutContent` bunu sorar (ölçüldü: 760×560'ta son kutu satırı görünmüyordu).
-    /// Yer yoksa kutular zaten kendi `layout()` içinde alçak düzene düşer; burası üst sınırı verir.
+    /// Ölçü kutularının kaç satıra dizileceği.
+    static func tileRows(forWidth width: CGFloat) -> Int {
+        Int(ceil(5 / Double(columns(for: width))))
+    }
+
+    /// Panonun **ihtiyaç duyduğu** yükseklik: çip sırası + kutu satırları + özet/düğme sırası.
+    /// `layoutBoard` liste boyunu buradan kalan yerden hesaplar; `tileH` alçalınca grafik çizgisi düşer,
+    /// `tiles = 0` (katışık) yalnız çip + özet kalır.
+    static func requiredHeight(width: CGFloat, tileH: CGFloat, tiles: Int) -> CGFloat {
+        guard tiles > 0 else { return chipRowHeight + summaryRowHeight }
+        let rows = Int(ceil(Double(tiles) / Double(max(1, columns(for: width)))))
+        return chipRowHeight + CGFloat(rows) * (tileH + gap) + summaryRowHeight
+    }
+
+    /// Bu görünüme biçilmiş genişlikte gereken yükseklik (katışık/alkaçlı mod hesaba katılır).
     func neededHeight(forWidth width: CGFloat) -> CGFloat {
-        if compact { return 14 + 30 + 32 + 20 + 14 }
-        let columns = Self.columns(for: width)
-        let rows = Int(ceil(Double(tiles.count) / Double(columns)))
-        // 6 üst boşluk + 8 çip satırı + kutu araları + özet + olay satırı + 14 tampon:
-        // ölçüldü, tam sığdırılan yükseklikte "Olaylar" satırı kesiliyordu.
-        return 14 + 30 + CGFloat(rows) * (104 + 8) + 32 + 20 + 14
+        let tileH = compactTiles ? Self.shortTileHeight : Self.tileHeight
+        return Self.requiredHeight(width: width, tileH: tileH, tiles: compact ? 0 : tiles.count)
     }
 }
 
@@ -514,12 +498,18 @@ final class EventRowView: NSView {
     private let textLabel = NSTextField(labelWithString: "")
     private let countLabel = NSTextField(labelWithString: "")
 
-    init(_ row: EventRow, time: DateFormatter) {
+    private static let time: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+
+    init(_ row: EventRow) {
         super.init(frame: .zero)
         led.wantsLayer = true
         led.layer?.backgroundColor = row.severity.color.cgColor
         led.layer?.cornerRadius = 3.5
-        timeLabel.stringValue = time.string(from: row.last)
+        timeLabel.stringValue = Self.time.string(from: row.last)
         timeLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .regular)
         timeLabel.textColor = .tertiaryLabelColor
         textLabel.stringValue = row.text
@@ -549,5 +539,148 @@ final class EventRowView: NSView {
                                  width: max(40, countX - 58), height: 15)
         countLabel.frame = NSRect(x: countX, y: (bounds.height - countLabel.frame.height) / 2,
                                   width: countWidth, height: countLabel.frame.height)
+    }
+}
+
+/// Olay satırlarını taşıyan düz kap: yüksekliği satır sayısından, satır genişliği
+/// kendi genişliğinden hesaplanır. (Denenen `NSStackView` + scroll kombinasyonu
+/// satırları sıfır yükseklikte bırakıyordu.)
+private final class EventRowStack: NSView {
+    private var rows: [EventRowView] = []
+    static let rowHeight: CGFloat = 22
+
+    override var isFlipped: Bool { true }
+
+    func rebuild(_ rows: [EventRowView]) {
+        subviews.forEach { $0.removeFromSuperview() }
+        self.rows = rows
+        rows.forEach(addSubview)
+        frame.size.height = CGFloat(rows.count) * Self.rowHeight
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        for (i, row) in rows.enumerated() {
+            row.frame = NSRect(x: 4, y: CGFloat(i) * Self.rowHeight,
+                               width: max(120, bounds.width - 22), height: Self.rowHeight - 2)
+        }
+    }
+}
+
+/// Olay ekranı: üstte elzem özet (durum + sayaçlar), altta tam yükseklikte kaydırılabilir
+/// liste. Pano içinde katlanır liste gerçek tıklamayla açılmıyordu ve açılınca sığmıyordu
+/// — kullanıcı isteği üzerine ayrı ekran.
+final class EventsPageView: NSView {
+    let heading = NSTextField(labelWithString: "Olaylar")
+    /// Elzem satır: rozetteki durumun tamamı (yayın/kanal/kayıp) — pano görünmeden de okunsun.
+    let statusLine = NSTextField(labelWithString: "")
+    let subtitle = NSTextField(labelWithString: "")
+    private let statusLed = NSView()
+    private let statusBox = NSView()
+    let back = NSButton()
+    let clear = NSButton()
+    /// Ham günlük dosyası (satır satır, katlamasız) — arayüzdeki grupların kaynağı.
+    let openLog = NSButton()
+    private let scroll = NSScrollView()
+    private let stack = EventRowStack()
+    var onBack: (() -> Void)?
+    var onClear: (() -> Void)?
+    var onOpenLog: (() -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        heading.font = NSFont.systemFont(ofSize: 15, weight: .semibold)
+        statusLine.font = NSFont.systemFont(ofSize: 12.5, weight: .semibold)
+        subtitle.font = NSFont.systemFont(ofSize: 11)
+        subtitle.textColor = .secondaryLabelColor
+        subtitle.lineBreakMode = .byTruncatingTail
+        statusBox.wantsLayer = true
+        statusBox.layer?.cornerRadius = 8
+        statusBox.layer?.borderWidth = 1
+        statusBox.layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.14).cgColor
+        statusBox.layer?.borderColor = NSColor.separatorColor.cgColor
+        statusLed.wantsLayer = true
+        statusLed.layer?.cornerRadius = 4
+        statusLed.layer?.backgroundColor = NSColor.tertiaryLabelColor.cgColor
+        back.bezelStyle = .rounded
+        back.title = "Geri"
+        back.keyEquivalent = "\u{1b}"                       // Esc
+        back.target = self
+        back.action = #selector(pressBack)
+        clear.bezelStyle = .rounded
+        clear.title = "Temizle"
+        clear.target = self
+        clear.action = #selector(pressClear)
+        openLog.bezelStyle = .rounded
+        openLog.title = "Ham günlüğü aç"
+        openLog.target = self
+        openLog.action = #selector(pressOpenLog)
+        scroll.hasVerticalScroller = true
+        scroll.hasHorizontalScroller = false
+        scroll.autohidesScrollers = true
+        scroll.borderType = .bezelBorder
+        scroll.drawsBackground = false
+        scroll.documentView = stack
+        [heading, back, clear, openLog, statusBox, statusLed, subtitle, scroll].forEach {
+            addSubview($0)
+        }
+        // Durum yazısı kutunun İÇİNDE: ölçülen kusur, etiket sayfaya eklenince kutunun
+        // üstüne (sayfanın en üstüne) düşüyor ve başlıkla çakışıyordu.
+        statusBox.addSubview(statusLine)
+        statusBox.addSubview(statusLed)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var isFlipped: Bool { true }
+
+    @objc private func pressBack() { onBack?() }
+    @objc private func pressClear() { onClear?() }
+    @objc private func pressOpenLog() { onOpenLog?() }
+
+    /// `status` = elzem durum cümlesi, `counts` = grup/satır sayımı.
+    /// `resetScroll` yalnız ekran ilk açıldığında true: yeni olay geldikçe kullanıcının
+    /// kaydırdığı yer sıfırlanmasın.
+    func show(rows: [EventRow], status: String, counts: String,
+              tone: DashboardView.Summary = .idle, resetScroll: Bool = false) {
+        stack.rebuild(rows.map { EventRowView($0) })
+        statusLine.stringValue = status
+        subtitle.stringValue = counts
+        let color: NSColor
+        switch tone {
+        case .idle: color = .tertiaryLabelColor
+        case .ok: color = .systemGreen
+        case .warn: color = .systemOrange
+        case .bad: color = .systemRed
+        }
+        statusLed.layer?.backgroundColor = color.cgColor
+        statusLine.textColor = tone == .idle ? .labelColor : color
+        needsLayout = true
+        if resetScroll {
+            scroll.contentView.scroll(to: .zero)
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
+    }
+
+    override func layout() {
+        super.layout()
+        let w = bounds.width
+        back.sizeToFit(); clear.sizeToFit(); openLog.sizeToFit()
+        let backW = max(84, back.frame.width + 24)
+        let clearW = max(84, clear.frame.width + 24)
+        let logW = max(120, openLog.frame.width + 24)
+        back.frame = NSRect(x: w - backW - 12, y: 12, width: backW, height: 26)
+        clear.frame = NSRect(x: back.frame.minX - clearW - 8, y: 12, width: clearW, height: 26)
+        openLog.frame = NSRect(x: clear.frame.minX - logW - 8, y: 12, width: logW, height: 26)
+        heading.frame = NSRect(x: 12, y: 12, width: max(80, openLog.frame.minX - 24), height: 22)
+        statusBox.frame = NSRect(x: 12, y: 46, width: w - 24, height: 30)
+        statusLed.frame = NSRect(x: 12, y: 11, width: 8, height: 8)
+        statusLine.frame = NSRect(x: 28, y: 7, width: max(60, w - 52), height: 16)
+        subtitle.frame = NSRect(x: 12, y: 82, width: w - 24, height: 15)
+        let listY: CGFloat = 102
+        scroll.frame = NSRect(x: 12, y: listY, width: w - 24, height: max(60, bounds.height - listY - 12))
+        stack.frame = NSRect(x: 0, y: 0, width: max(120, scroll.contentSize.width),
+                             height: stack.frame.height)
     }
 }
