@@ -21,6 +21,14 @@ class ControlLink(storageDir: File, private val listener: Listener) {
         fun onStartSession(p: SessionParams): Boolean
         fun onStopSession(reason: String)
         fun onClientDisconnected()
+
+        /** Kontrol kanalı dinlenemiyor: TV, Mac'in isteklerini duyamaz. Sebep arayüzde
+         *  gösterilir — sessiz kalıp "eşleşme yok" gibi görünmesindense (ölçülen kusur:
+         *  accept bir kez düşünce uygulama bir daha hiç dinlemiyordu). */
+        fun onControlChannelDown(reason: String) { }
+
+        /** Kanal yeniden dinleniyor. */
+        fun onControlChannelUp() { }
     }
 
     companion object { private const val TAG = "ATVM-Control" }
@@ -43,7 +51,6 @@ class ControlLink(storageDir: File, private val listener: Listener) {
         if (running.get()) return
         running.set(true)
         acceptThread = Thread({ acceptLoop() }, "atvm-control").apply { start() }
-        Log.i(TAG, "kontrol kanalı ${Protocol.CONTROL_PORT} üzerinde dinleniyor, eşleşmiş=${pairing.paired}")
     }
 
     fun stop() {
@@ -94,20 +101,36 @@ class ControlLink(storageDir: File, private val listener: Listener) {
     fun storedSessionKey(): ByteArray? = pairing.storedSessionKey()
 
     private fun acceptLoop() {
-        try {
-            server = ServerSocket(Protocol.CONTROL_PORT)
-            while (running.get()) {
-                val s = server!!.accept()
-                s.tcpNoDelay = true      // Nagle kapalı: küçük kontrol mesajları için kritik
-                handle(s)
+        var failures = 0
+        while (running.get()) {
+            try {
+                // Önceki örnekten kalan soket birkaç saniye dolu olabilir: her turda yeniden
+                // denenir, vazgeçilmez. Tek örnek kuralı bu yüzden gevşetilmez.
+                server = ServerSocket(Protocol.CONTROL_PORT)
+                failures = 0
+                listener.onControlChannelUp()
+                Log.i(TAG, "kontrol kanalı ${Protocol.CONTROL_PORT} üzerinde dinleniyor")
+                while (running.get()) {
+                    val s = server!!.accept()
+                    s.tcpNoDelay = true      // Nagle kapalı: küçük kontrol mesajları için kritik
+                    handle(s)
+                }
+            } catch (e: Exception) {
+                if (!running.get()) break
+                failures++
+                val why = e.message ?: e.javaClass.simpleName
+                Log.e(TAG, "kontrol kanalı kapandı (deneme $failures): $why", e)
+                listener.onControlChannelDown("$why (deneme $failures)")
+                try { server?.close() } catch (ignored: Exception) { }
+                server = null; writer = null; client = null; authed = false
+                // Üstel geri çekilme, 30 sn'de tavan: boştayken ağa yük bindirmeyelim.
+                val wait = minOf(30_000L, 1_000L shl minOf(5, failures - 1))
+                try { Thread.sleep(wait) } catch (ignored: InterruptedException) { break }
             }
-        } catch (e: Exception) {
-            if (running.get()) Log.e(TAG, "accept döngüsü sonlandı", e)
-        } finally {
-            try { server?.close() } catch (e: Exception) { }
-            server = null; writer = null; client = null; authed = false
-            listener.onClientDisconnected()
         }
+        try { server?.close() } catch (e: Exception) { }
+        server = null; writer = null; client = null; authed = false
+        listener.onClientDisconnected()
     }
 
     /** Tek bağlantının durumu. Kabul döngüsü bağlantıları sırayla işler; aynı anda tek oturum. */

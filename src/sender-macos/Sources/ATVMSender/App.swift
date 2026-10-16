@@ -170,6 +170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         Task { @MainActor in
             await engine.stop()
             if let tvHost { advertised.notifyStopped(host: tvHost) }
+            InstanceGuard.releaseLock()      // tek örnek kilidi bırak: yeniden açılabilir olsun
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
@@ -1236,13 +1237,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         if paths.count > 1 {
             note("\(paths.count) Pane Cast kopyası kayıtlı — izin ve TV kanalları karışır. Tek kopyayı kullan; diğerini klasörden çıkar.", .warn)
         }
-        let mine = ProcessInfo.processInfo.processIdentifier
-        let others = NSWorkspace.shared.runningApplications.filter {
-            $0.bundleIdentifier == id && $0.processIdentifier != mine
-        }
-        if !others.isEmpty {
-            note("Pane Cast zaten çalışıyor (pid \(others.map { String($0.processIdentifier) }.joined(separator: ", "))) — iki örnek aynı TV kanallarını paylaşamaz.", .warn)
-        }
+        // Koşan ikinci örnek artık mümkün değil: InstanceGuard servisi açılışta tek örnek
+        // kilitlerini denetler ve ikinci örneği kapatır. Burada kalan denetim diskteki
+        // kayıtlı kopyalar (izinlerin hangisine verildiği karışabiliyordu).
     }
 
     // ---------- diyaloglar ----------

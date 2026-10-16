@@ -75,6 +75,10 @@ func usage() -> Never {
 let command = args.count > 1 ? args[1] : ""
 emit("başlatıldı: komut=\(command.isEmpty ? "(yok)" : command) argümanlar=\(args.dropFirst().joined(separator: " "))")
 
+// Bir cihazda tek örnek: TV tarafına dönük kanalları tutan komutlar ikinci kez açılmaz.
+// (Salt-okunur teşhis komutları kilitten muaftır; arayüz açıkken de koşabilirler.)
+InstanceGuard.enforce(command: command, log: { emit($0) })
+
 switch command {
 
 case "gui", "":

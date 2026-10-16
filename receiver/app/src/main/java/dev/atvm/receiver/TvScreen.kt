@@ -39,6 +39,7 @@ class TvScreen(private val context: Context, private val ui: Handler) {
         val headline: String,
         val subline: String,
         val note: String,
+        val noteIsError: Boolean = false,
         val pin: String,
         val pinSecondsLeft: Int,
         val cards: List<Card>,
@@ -135,7 +136,6 @@ class TvScreen(private val context: Context, private val ui: Handler) {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
             addView(headline)
             addView(subline, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
-            addView(noteLine, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) })
         }
         heroReady.addView(readyTexts)
         heroReady.addView(cardRow, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(26) })
@@ -151,6 +151,11 @@ class TvScreen(private val context: Context, private val ui: Handler) {
 
         layer.addView(topBar, LinearLayout.LayoutParams(-1, -2))
         layer.addView(middle, LinearLayout.LayoutParams(-1, 0, 1f))
+        // Not satırı DURUMDAN BAĞIMSIZ: ölçülen kusur, uyarı yalnız hazır/yayında
+        // çiziliyor; yeni bir TV'de (PIN ekranında) "kontrol kanalı kapalı" hiç görünmüyordu.
+        layer.addView(noteLine, LinearLayout.LayoutParams(-2, -2).apply {
+            gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = dp(10)
+        })
         layer.addView(legend, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL })
     }
 
@@ -199,8 +204,6 @@ class TvScreen(private val context: Context, private val ui: Handler) {
         } else {
             headline.text = s.headline
             subline.text = s.subline
-            noteLine.text = s.note
-            noteLine.visibility = if (s.note.isEmpty()) View.GONE else View.VISIBLE
         }
 
         val cardKey = s.cards.joinToString("|") { "${it.name}${it.detail}${it.state}" }
@@ -227,6 +230,10 @@ class TvScreen(private val context: Context, private val ui: Handler) {
 
         detailBox.text = s.detail
         detailBox.visibility = if (s.showDetail) View.VISIBLE else View.GONE
+
+        noteLine.text = s.note
+        noteLine.setTextColor(if (s.noteIsError) 0xFFFF6B6B.toInt() else 0xFFFFC46B.toInt())
+        noteLine.visibility = if (s.note.isEmpty()) View.GONE else View.VISIBLE
 
         val legendKey = RemoteKeys.hintsLine(s.screen, s.cards.isNotEmpty())
         if (legendKey != lastLegendKey) { lastLegendKey = legendKey; rebuildLegend(s.screen, s.cards.isNotEmpty(), tone) }

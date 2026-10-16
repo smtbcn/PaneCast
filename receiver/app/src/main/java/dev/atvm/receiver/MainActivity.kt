@@ -172,6 +172,21 @@ class MainActivity : Activity(), ControlLink.Listener {
         }
     }
 
+    /** Kontrol kanalı dinlenemiyor ya da yeniden dinlenmeye geçti: ekranda yazılı durur. */
+    private var channelDown: String? = null
+
+    override fun onControlChannelDown(reason: String) {
+        Log.e(TAG, "kontrol kanalı iniyor: $reason")
+        channelDown = reason
+        ui.post { renderStatus() }
+    }
+
+    override fun onControlChannelUp() {
+        if (channelDown != null) Log.i(TAG, "kontrol kanalı yeniden dinleniyor")
+        channelDown = null
+        ui.post { renderStatus() }
+    }
+
     override fun onDenied(reason: String) {
         Log.w(TAG, "reddedildi: $reason")
         ui.post { renderStatus() }
@@ -399,6 +414,7 @@ class MainActivity : Activity(), ControlLink.Listener {
             headline = if (kind == RemoteKeys.Screen.READY) "Yayına hazır" else "Yayında",
             subline = if (kind == RemoteKeys.Screen.READY) "eşleşilen: Masaüstü-Mac" else "",
             note = if (kind == RemoteKeys.Screen.READY) "OK seçtiğin bilgisayarı çağırır" else "",
+            noteIsError = false,
             pin = "123456", pinSecondsLeft = 120,
             cards = if (kind == RemoteKeys.Screen.READY) cards else emptyList(),
             stats = "● YAYINDA  1920x1080@60  ·  fps 59,8  ·  giriş→render 112 ms",
@@ -456,7 +472,8 @@ class MainActivity : Activity(), ControlLink.Listener {
                 screen = kind,
                 headline = headline,
                 subline = subline,
-                note = note,
+                note = channelDown?.let { "kontrol kanalı kapalı: $it — yeniden deneniyor" } ?: note,
+                noteIsError = channelDown != null,
                 pin = currentPin ?: "······",
                 pinSecondsLeft = pinLeft,
                 cards = computers.map { c ->
