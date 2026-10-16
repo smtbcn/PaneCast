@@ -68,6 +68,34 @@ fun main() {
     check("çift kayıt yok", ready.size == ready.map { it.key + it.action }.distinct().size)
     check("bilinmeyen tuş UNKNOWN", cmd(999) == RemoteKeys.Command.UNKNOWN)
 
+    // 5) BACK karar makinesi — gerçek cihazda ölçülen kusurun kilidi: ACTION_UP tüketilip
+    //    onKeyUp'a bırakıldığı için kumandadan durdur/çık hiç koşmuyordu.
+    val D = RemoteKeys.Phase.DOWN
+    val U = RemoteKeys.Phase.UP
+    val STOP = RemoteKeys.BackAction.STOP_STREAM
+    val EXIT = RemoteKeys.BackAction.EXIT
+    val TRACK = RemoteKeys.BackAction.START_TRACKING
+    val DIALOG = RemoteKeys.BackAction.UNPAIR_DIALOG
+    val SYSTEM = RemoteKeys.BackAction.TO_SYSTEM
+    val SWALLOW = RemoteKeys.BackAction.SWALLOW
+    fun back(phase: RemoteKeys.Phase, long: Boolean = false, streaming: Boolean = false,
+             paired: Boolean = true, dialog: Boolean = false) =
+        RemoteKeys.backAction(phase, long, streaming, paired, dialog)
+
+    check("yayında kısa DOWN yalnız izlenir", back(D, streaming = true) == TRACK)
+    check("yayında kısa UP yayını durdurur", back(U, streaming = true) == STOP)
+    check("yayında değilken UP ekrandan çıkarır", back(U, streaming = false) == EXIT)
+    check("basılı tutma UP kararı vermez", back(U, long = true, streaming = true) == SWALLOW)
+    check("basılı tutma DOWN onay sorar", back(D, long = true) == DIALOG)
+    check("eşleşme yokken basılı tutma onay sormaz",
+          back(D, long = true, paired = false) == TRACK)
+    check("yayında basılı tutma onay sormaz",
+          back(D, long = true, streaming = true) == TRACK)
+    check("diyalog açıkken tuş diyalogundur (DOWN)", back(D, dialog = true) == SYSTEM)
+    check("diyalog açıkken tuş diyalogundur (UP)", back(U, dialog = true) == SYSTEM)
+    check("UP asla yutulmaz: durdur/çık ikilisinden biri",
+          setOf(back(U, streaming = true), back(U, streaming = false)) == setOf(STOP, EXIT))
+
     println(if (failures == 0) "TAMAM: $checks denetim geçti" else "$failures/$checks denetim başarısız")
     if (failures > 0) kotlin.system.exitProcess(1)
 }

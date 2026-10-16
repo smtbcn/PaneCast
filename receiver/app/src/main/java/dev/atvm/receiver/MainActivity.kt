@@ -537,6 +537,12 @@ class MainActivity : Activity(), ControlLink.Listener {
      * Kural: `RemoteKeys` PASS derse (ses, kanal, güç, CEC, gezinme, odaklıyken SELECT)
      * `super`e bırakılır. Eylemler yalnız ACTION_DOWN'da ve `repeatCount == 0` iken koşar:
      * tuşu basılı tutmak iki kez "yayın başlat" üretemez.
+     *
+     * BACK'in kararı `RemoteKeys.backAction`dadır ve DOWN+UP iki dönemi de burada tüketilir:
+     * kısa basma yayını durdurur, yayında değilse ekrandan çıkar (çıkış onDestroy'i çalıştırır:
+     * mDNS kaydı, soketler, çözücü ve ses hattı serbest kalır); basılı tutma eşleşme silme
+     * onayını açar. Ölçülen kusur (gerçek TV, 0.2.4): UP olayı tüketilip `onKeyUp`a bırakıldığı
+     * için durdur/çık hiç koşmuyordu.
      */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val cmd = RemoteKeys.command(event.keyCode, event.repeatCount, event.isLongPress)
@@ -553,17 +559,21 @@ class MainActivity : Activity(), ControlLink.Listener {
             Log.i(TAG, "tuş " + event.keyCode + " → " + cmd + " (tekrar " + event.repeatCount + ")")
         }
         screen.wakeStats()
-        if (event.action != KeyEvent.ACTION_DOWN) {
-            if (cmd == RemoteKeys.Command.BACK) return true
-            return super.dispatchKeyEvent(event)
-        }
-        when (cmd) {
-            RemoteKeys.Command.BACK -> {
-                event.startTracking()
-                if (unpairDialog?.isShowing == true) return super.dispatchKeyEvent(event)
-                if (event.isLongPress && !streaming && control.isPaired) { confirmUnpair(); return true }
-                return true                     // karar ACTION_UP'ta: kısa = durdur/çık
+        val phase = if (event.action == KeyEvent.ACTION_DOWN) RemoteKeys.Phase.DOWN else RemoteKeys.Phase.UP
+        if (cmd == RemoteKeys.Command.BACK) {
+            when (RemoteKeys.backAction(phase, event.isLongPress, streaming,
+                                        control.isPaired, unpairDialog?.isShowing == true)) {
+                RemoteKeys.BackAction.TO_SYSTEM -> return super.dispatchKeyEvent(event)
+                RemoteKeys.BackAction.START_TRACKING -> { event.startTracking(); return true }
+                RemoteKeys.BackAction.UNPAIR_DIALOG -> { confirmUnpair(); return true }
+                RemoteKeys.BackAction.STOP_STREAM -> { if (phase == RemoteKeys.Phase.UP) stopStream("kullanıcı DURDUR"); return true }
+                RemoteKeys.BackAction.EXIT -> { if (phase == RemoteKeys.Phase.UP) finish(); return true }
+                RemoteKeys.BackAction.SWALLOW -> return true
             }
+        }
+        if (event.action != KeyEvent.ACTION_DOWN) return super.dispatchKeyEvent(event)
+        when (cmd) {
+            // BACK yukarıda `RemoteKeys.backAction` ile iki dönemi birden tüketir; buraya düşmez.
             RemoteKeys.Command.SELECT -> when {
                 streaming -> Unit
                 control.isPaired && computers.isEmpty() -> rescan("liste boş — yeniden aranıyor")
@@ -586,18 +596,6 @@ class MainActivity : Activity(), ControlLink.Listener {
             else -> return super.dispatchKeyEvent(event)
         }
         return true
-    }
-
-    /// Kısa BACK: yayını durdurur ya da çıkarır. Uzun basış eşleşme silme onayını açar.
-    /// Çıkış onDestroy'i çalıştırır: mDNS kaydı, soketler, çözücü ve ses hattı serbest kalır.
-    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
-        if (RemoteKeys.command(keyCode, event.repeatCount, event.isLongPress) == RemoteKeys.Command.BACK) {
-            if (unpairDialog?.isShowing == true) return super.onKeyUp(keyCode, event)
-            if (event.isLongPress) return true
-            if (streaming) stopStream("kullanıcı DURDUR") else finish()
-            return true
-        }
-        return super.onKeyUp(keyCode, event)
     }
 
     private fun rescan(why: String) {

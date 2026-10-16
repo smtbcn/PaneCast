@@ -85,7 +85,10 @@ class TvScreen(private val context: Context, private val ui: Handler) {
     }
     private val detailBox = TextView(context).apply {
         textSize = 13f; setTextColor(0xFFBFD3E8.toInt()); setPadding(dp(16), dp(12), dp(16), dp(12))
-        maxLines = 10; visibility = View.GONE
+        // Şerit yüksekliği sınırlı olsun: uzun ölçüm satırları küçültülüp tek satıra düşürülür.
+        maxLines = 6; ellipsize = android.text.TextUtils.TruncateAt.END
+        maxWidth = dp(620)
+        visibility = View.GONE
         background = round(0xE6060A12.toInt(), 14, 0x33FFFFFF, 1)
     }
     private val heroPairing = LinearLayout(context).apply {
@@ -134,20 +137,20 @@ class TvScreen(private val context: Context, private val ui: Handler) {
 
         val readyTexts = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
-            addView(headline)
+            // Ölçülen kusur (gerçek TV, 0.2.4): düşey LinearLayout'un çocukları varsayılan
+            // olarak MATCH_PARENT genişlik alır; başlık bloğu böylece kart satırının genişliğine
+            // (480 px) sıkışıyor ve alt satır "… bağlantı"da kırpılıyordu. Her iki sıra da
+            // artık içeriğinin genişliğini ister.
+            addView(headline, LinearLayout.LayoutParams(-2, -2))
             addView(subline, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
         }
-        heroReady.addView(readyTexts)
+        heroReady.addView(readyTexts, LinearLayout.LayoutParams(-2, -2))
         heroReady.addView(cardRow, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(26) })
 
         middle.addView(heroPairing, center())
         middle.addView(heroReady, center())
         middle.addView(statsStrip, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL)
             .apply { topMargin = dp(4) })
-        // Ölçülen kusur: geniş üst-köşe kartı ortadaki başlığın üstüne biniyordu.
-        // Ayrıntı sağ ALT köşede, kart listesinin ve başlığın dokunmadığı yerde durur.
-        middle.addView(detailBox, FrameLayout.LayoutParams(dp(330), -2, Gravity.BOTTOM or Gravity.END)
-            .apply { bottomMargin = dp(6); rightMargin = dp(4) })
 
         layer.addView(topBar, LinearLayout.LayoutParams(-1, -2))
         layer.addView(middle, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -155,6 +158,11 @@ class TvScreen(private val context: Context, private val ui: Handler) {
         // çiziliyor; yeni bir TV'de (PIN ekranında) "kontrol kanalı kapalı" hiç görünmüyordu.
         layer.addView(noteLine, LinearLayout.LayoutParams(-2, -2).apply {
             gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = dp(10)
+        })
+        // Ayrıntı katmanı KENDİ sırasında durur: köşeye sabitliydi ve ortadaki kart satırının
+        // üstüne biniyordu (ölçülen kusur, gerçek TV). Şerit olarak ortayı daraltır, üstüne çıkmaz.
+        layer.addView(detailBox, LinearLayout.LayoutParams(-2, -2).apply {
+            gravity = Gravity.CENTER_HORIZONTAL; topMargin = dp(2); bottomMargin = dp(8)
         })
         layer.addView(legend, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL })
     }
@@ -229,11 +237,10 @@ class TvScreen(private val context: Context, private val ui: Handler) {
         lastScreen = s.screen
 
         detailBox.text = s.detail
-        // Eşleşme ekranında ayrıntı katmanı çizilmez: Ölçülen kusur (yayın öncesi incelemede
-        // bulundu), sağ alt köşedeki kutu PIN kartının alt kenarına biniyordu. Kutunun
-        // söyleyeceği zaten ekranda duruyor (kodun süresi kartın içinde, sürüm + adres üst
-        // şeritte), hazır/yayın durumlarında ise çözücü ve ağ ölçümleri gerekir — orada kalır.
-        detailBox.visibility = if (s.showDetail && s.screen != RemoteKeys.Screen.PAIRING) View.VISIBLE else View.GONE
+        // Ayrıntı katmanı kendi sırasında (not ile rehber arasında): öncesinde köşeye
+        // sabitti ve ortadaki kartların üstüne biniyordu — artık hiçbir durumla çakışmaz,
+        // bu yüzden eşleşme ekranında da çizilebilir.
+        detailBox.visibility = if (s.showDetail) View.VISIBLE else View.GONE
 
         noteLine.text = s.note
         noteLine.setTextColor(if (s.noteIsError) 0xFFFF6B6B.toInt() else 0xFFFFC46B.toInt())

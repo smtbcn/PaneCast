@@ -106,6 +106,41 @@ object RemoteKeys {
         else -> false
     }
 
+    // ---- BACK'in karar makinesi ----
+
+    /** Olayın dönemi: basma / bırakma. */
+    enum class Phase { DOWN, UP }
+
+    /** BACK tuşunun yapılabilir tek karşılığı. `SWALLOW` = olay tüketildi, eylem yok. */
+    enum class BackAction { TO_SYSTEM, START_TRACKING, UNPAIR_DIALOG, STOP_STREAM, EXIT, SWALLOW }
+
+    /**
+     * BACK kararının TEK kaynağı. Neden MainActivity'nin içinde değil de burada:
+     * ölçülen kusur (gerçek Vestel TV, 0.2.4) — `dispatchKeyEvent`, ACTION_UP olayını
+     * kendisi tüketip `return true` diyordu; bu yüzden `onKeyUp` hiç koşmuyordu ve
+     * kumandadan **yayını durdur / ekrandan çık** çalışmıyordu. Karar saf olunca bu
+     * sınıf hata JVM'de yakalanabiliyor.
+     *
+     * Kurallar: onay diyaloğu açıksa tuş diyalogundur; uzun basış kararı DOWN'da verilir
+     * (eşleşme silme onayı), UP yalnız yutulur; kısa UP yayında ise yayını durdurur,
+     * değilse ekrandan çıkarır (onDestroy kaynakları serbest bırakır).
+     */
+    fun backAction(phase: Phase, longPress: Boolean, streaming: Boolean,
+                   paired: Boolean, dialogOpen: Boolean): BackAction {
+        if (dialogOpen) return BackAction.TO_SYSTEM
+        return when (phase) {
+            Phase.DOWN -> when {
+                longPress && !streaming && paired -> BackAction.UNPAIR_DIALOG
+                else -> BackAction.START_TRACKING          // startTracking() + tüket
+            }
+            Phase.UP -> when {
+                longPress -> BackAction.SWALLOW            // karar DOWN'da verildi
+                streaming -> BackAction.STOP_STREAM
+                else -> BackAction.EXIT
+            }
+        }
+    }
+
     // ---- alt rehber (tek sıra, kısa) ----
 
     /** Ekranda hangi durumun geçerli olduğu; rehber bundan üretilir, elle yazılmaz. */
