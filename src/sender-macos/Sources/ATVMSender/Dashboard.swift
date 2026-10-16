@@ -225,10 +225,14 @@ final class ChipView: NSView {
     }
 
     /// Çip genişliği içeriğe göre: metin kesilmesin, ama çok uzarsa pencereyi bozmasın.
+    /// Genişlik **yazıdan** ölçülür, etiketin `intrinsicContentSize`'ından değil: o ölçüm
+    /// değer değiştiğinde henüz tazelenmemiş olabiliyor ve çip 90 px'lik tabana düşüp
+    /// "1 TV · 1 eşleşmiş" yazısını "1…iş"e kırpıyordu (ölçüldü: kurulu 0.2.12'de KEŞİF çipi).
     override var intrinsicContentSize: NSSize {
-        valueLabel.sizeToFit()
-        let w = 10 + keyLabel.intrinsicContentSize.width + 6 + ceil(valueLabel.intrinsicContentSize.width)
-            + 8 + 14 + 10
+        func width(_ label: NSTextField) -> CGFloat {
+            ceil((label.stringValue as NSString).size(withAttributes: [.font: label.font as Any]).width)
+        }
+        let w = 10 + width(keyLabel) + 6 + width(valueLabel) + 8 + 14 + 10
         return NSSize(width: min(max(w, 90), 420), height: 24)
     }
 }
