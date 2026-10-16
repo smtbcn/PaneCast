@@ -117,6 +117,34 @@ fun main() {
     check("bekleme cezası kırmızı değil", !ControlMessages.deniedNeedsAction("locked"))
     check("pencere seçimi kırmızı", ControlMessages.deniedNeedsAction("no_window_selected_on_sender"))
 
+    // 7) mDNS çok adres döndürünce doğru aday önce denenmeli (ölçülen kusur: TV, Mac'in
+    //    sanal makine köprüsüne bağlanmaya çalıştı ve OK hiçbir şey yapmıyordu).
+    //    Süsleme adresleri RFC 5737 belge aralığından: gerçek ağ değerleri depoya giremez.
+    val tv = listOf("198.51.100.50")
+    check("aynı ağdaki aday önce",
+          SenderAddresses.order(listOf("192.0.2.5", "198.51.100.67"), tv)
+              == listOf("198.51.100.67", "192.0.2.5"))
+    check("tek aday korundu", SenderAddresses.order(listOf("203.0.113.9"), tv) == listOf("203.0.113.9"))
+    check("yinelenen adres düşer",
+          SenderAddresses.order(listOf("198.51.100.67", "198.51.100.67"), tv).size == 1)
+    check("çöp değerler listeye girmiyor",
+          SenderAddresses.order(listOf("", "0.0.0.0", "fe80::1", "198.51.100.67"), tv)
+              == listOf("198.51.100.67"))
+    check("TV adresi yoksa sıra bozulmuyor",
+          SenderAddresses.order(listOf("b", "a"), emptyList()) == listOf("b", "a"))
+    check("boş liste boş döner", SenderAddresses.order(emptyList(), tv).isEmpty())
+    // 7b) Ad çözümlemesi aday listesini genişletir; başarısız olursa tek adrese düşer.
+    check("adın tüm adresleri adaya ekleniyor",
+          SenderAddresses.expand("192.0.2.5") { listOf("198.51.100.67", "192.0.2.5") }
+              == listOf("192.0.2.5", "198.51.100.67"))
+    check("çözümleme patlarsa mevcut adres korunuyor",
+          SenderAddresses.expand("198.51.100.67") { throw java.net.UnknownHostException("yok") }
+              == listOf("198.51.100.67"))
+    check("genişletme + sıralama birlikte: aynı ağ kazanıyor",
+          SenderAddresses.order(SenderAddresses.expand("192.0.2.5") {
+              listOf("198.51.100.67", "192.0.2.5") }, tv) == listOf("198.51.100.67", "192.0.2.5"))
+    check("boş adres aday üretmez", SenderAddresses.expand("") { listOf("x") }.isEmpty())
+
     println(if (failures == 0) "TAMAM: $checks denetim geçti" else "$failures/$checks denetim başarısız")
     if (failures > 0) kotlin.system.exitProcess(1)
 }

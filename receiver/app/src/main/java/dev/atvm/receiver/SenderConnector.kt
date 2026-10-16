@@ -17,9 +17,22 @@ object SenderConnector {
 
     /** Sonuç: null = başarılı, değilse hata mesajı.
      *  Başarıda soket ControlLink'e devredilir: Mac akış parametrelerini (`start`) o sokete yazar,
-     *  IDR istekleri ve yayın sonlandırma da oradan gider. */
-    fun resume(host: String, port: Int, tvName: String, tvIp: String, mediaPort: Int,
+     *  IDR istekleri ve yayın sonlandırma da oradan gider.
+     *
+     *  `hosts` bir aday listesidir: aynı servis adının birden çok arayüz adresi olabilir ve
+     *  yanlış adaya düşmek "OK'a basınca hiçbir şey olmaması" demekti (ölçüldü). Adaylar
+     *  sırayla denenir; ilki tutunca durulur. */
+    fun resume(hosts: List<String>, port: Int, tvName: String, tvIp: String, mediaPort: Int,
                sessionKey: ByteArray, link: ControlLink): String? {
+        var last = "bilgisayarın adresi çözümlenemedi"
+        for (host in hosts) {
+            last = attempt(host, port, tvName, tvIp, mediaPort, sessionKey, link) ?: return null
+        }
+        return last
+    }
+
+    private fun attempt(host: String, port: Int, tvName: String, tvIp: String, mediaPort: Int,
+                        sessionKey: ByteArray, link: ControlLink): String? {
         val s = java.net.Socket()
         return try {
             s.connect(java.net.InetSocketAddress(host, port), 4000)

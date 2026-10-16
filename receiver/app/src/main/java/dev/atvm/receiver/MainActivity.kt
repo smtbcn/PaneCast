@@ -657,12 +657,21 @@ class MainActivity : Activity(), ControlLink.Listener {
         resuming = true
         renderNote("${c.name} çağrılıyor…")
         Thread {
-            val err = SenderConnector.resume(c.address, c.port, Build.MODEL,
-                localIpv4s().firstOrNull() ?: "", Protocol.MEDIA_PORT, key, control)
+            // Çok arayüzlü bilgisayarda mDNS tek ve keyfi bir adres döndürüyor (ölçüldü: TV,
+            // Mac'in sanal makine köprüsüne bağlanmaya çalıştı). Adın tüm adresleri çözülür,
+            // TV'nin kendi ağındaki aday önce denenir.
+            val mine = localIpv4s()
+            val targets = SenderAddresses.order(
+                SenderAddresses.expand(c.address) { name ->
+                    java.net.InetAddress.getAllByName(name).mapNotNull { a -> a.hostAddress }
+                }, mine)
+            Log.i(TAG, "yayın adayı ${targets.size} adres: ${targets.joinToString { it.substringBeforeLast('.') + ".*" }}")
+            val err = SenderConnector.resume(targets, c.port, Build.MODEL,
+                mine.firstOrNull() ?: "", Protocol.MEDIA_PORT, key, control)
             runOnUiThread {
                 resuming = false
                 if (err == null) renderNote("${c.name} çağrıldı — akış parametreleri bekleniyor")
-                else renderNote("başlatılamadı: $err")
+                else renderNote("başlatılamadı: $err", isError = true)
             }
         }.start()
     }

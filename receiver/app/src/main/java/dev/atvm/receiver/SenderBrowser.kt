@@ -49,6 +49,8 @@ class SenderBrowser(context: Context, private val onUpdate: (List<Computer>) -> 
             override fun onResolveFailed(s: NsdServiceInfo, e: Int) { Log.w(TAG, "çözümleme hatası $e") }
             override fun onServiceResolved(s: NsdServiceInfo) {
                 val host: InetAddress = s.host ?: return
+                // Tek adres geliyor; çok arayüzlü bilgisayarda hangisinin döneceği keyfi.
+                // Adayların tam listesi bağlantı anında üretilir (bkz. SenderAddresses.expand).
                 found[s.serviceName] = Computer(s.serviceName, host.hostAddress ?: return, s.port)
                 publish()
             }

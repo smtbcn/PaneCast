@@ -15,5 +15,6 @@ java -cp "$CP" org.jetbrains.kotlin.cli.jvm.K2JVMCompiler -no-stdlib -no-reflect
   -cp "$(jar 'kotlin-stdlib-2.0.21.jar')" -d "$OUT" \
   "$ROOT/receiver/app/src/main/java/dev/atvm/receiver/RemoteKeys.kt" \
   "$ROOT/receiver/app/src/main/java/dev/atvm/receiver/ControlMessages.kt" \
+  "$ROOT/receiver/app/src/main/java/dev/atvm/receiver/SenderAddresses.kt" \
   "$ROOT/receiver/selfcheck/RemoteKeysSelfCheck.kt"
 java -cp "$OUT:$(jar 'kotlin-stdlib-2.0.21.jar')" dev.atvm.receiver.RemoteKeysSelfCheckKt
