@@ -415,22 +415,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         titleLabel.sizeToFit()
         let titleW = max(96, titleLabel.frame.width + 8)
         titleLabel.frame = NSRect(x: inset, y: 10, width: titleW, height: 26)
-        let modeW = min(330, max(180, w - 2 * inset - titleW - 200))
+        // Mod düğmesi **doğal genişliğini** alır: İngilizce etiket ("TV screen (separate
+        // display)") 330 px'lık paya sığmıyor ve dil kutusunun üstüne biniyordu (ölçüldü).
+        // Sığışmazsa önce tema, sonra dil kutusu düşer; kırpılan taraf asla düğme olmaz.
+        modeControl.sizeToFit()
+        let modeW = max(180, modeControl.frame.width)
         modeControl.frame = NSRect(x: inset + titleW + 12, y: 10, width: modeW, height: 26)
         statusPill.frame = NSRect(x: w - inset - 180, y: 12, width: 180, height: 24)
-        // Tema ve dil kutuları rozedin solunda; başlık sırası sıkışınca ikisi birden kalkar
-        // (gövde kaydırılabiliyor, başlık sırası kaydırılamıyor → burada sıkışıklığa izin yok).
         let controlW: CGFloat = 150
         let controlsRight = w - inset - 180 - 8
-        let controlsLeft = inset + titleW + 12 + modeW
-        let bothShow = controlsRight - controlW - 8 > controlsLeft
-        let oneShow = controlsRight > controlsLeft
-        themePopup.isHidden = !bothShow
-        languagePopup.isHidden = !oneShow
-        if oneShow {
+        let rightOfMode = inset + titleW + 12 + modeW + 12
+        let langShows = controlsRight - controlW >= rightOfMode
+        let themeShows = langShows && controlsRight - controlW - 8 - controlW >= rightOfMode
+        themePopup.isHidden = !themeShows
+        languagePopup.isHidden = !langShows
+        if langShows {
             languagePopup.frame = NSRect(x: controlsRight - controlW, y: 10, width: controlW, height: 26)
         }
-        if bothShow {
+        if themeShows {
             themePopup.frame = NSRect(x: controlsRight - controlW - 8 - controlW, y: 10,
                                       width: controlW, height: 26)
         }

@@ -357,7 +357,11 @@ final class MetricTile: NSView {
 /// Pano: durum çipleri + ölçü kutuları + tek satır özet + katlanmış olaylar.
 /// `layout()` genişliğe göre sütun sayısını yeniden hesaplar (responsive).
 final class DashboardView: NSView {
-    private let chips = NSStackView()
+    /// Çiplerin kabı: **düz NSView**, `NSStackView` değil. Çip çerçeveleri `layout()`ta
+    /// elle hesaplanıyor (satıra diz + sığmayanı alt satıra indir); stack view kendi Auto
+    /// Layout geçişinde o çerçeveleri ezdi ve ilk çip görünmez genişliğe düştü (ölçüldü:
+    /// dar pencerede "SOURCE" çipi yalnız rozet noktası olarak çiziliyordu).
+    private let chips = NSView()
     private var tiles: [MetricTile] = []
     private let summaryBar = NSView()
     private let summaryLed = NSView()
@@ -380,6 +384,8 @@ final class DashboardView: NSView {
     /// Ağ yükü şeridi: yayının Mbps'i + üç payda yüzdesi (kullanıcı isteği).
     let netStrip = NetStripView(frame: .zero)
 
+    /// Elle yerleştirilen çipler (kap stack view değil, bkz. `chips`).
+    private var chipViews: [ChipView] = []
     private var languageWatch: LanguageWatch?
     /// Özet satırının kaynağı: anahtarla kurulduysa dil geçişinde yeniden çözülür,
     /// serbest yazıyla (TV'den gelen gerekçe) kurulduysa olduğu gibi kalır.
@@ -388,11 +394,8 @@ final class DashboardView: NSView {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        chips.orientation = .horizontal
-        chips.spacing = 8
-        chips.alignment = .centerY
-        chips.distribution = .fill
-        [chipSource, chipTarget, chipChannel, chipDiscovery].forEach { chips.addArrangedSubview($0) }
+        chipViews = [chipSource, chipTarget, chipChannel, chipDiscovery]
+        chipViews.forEach { chips.addSubview($0) }
         addSubview(chips)
 
         tiles = [tileFps, tileBitrate, tileLatency, tilePackets, tileHealth]
@@ -559,12 +562,11 @@ final class DashboardView: NSView {
     override func layout() {
         super.layout()
         let width = bounds.width
-        chips.layout()
         var chipY: CGFloat = 6
         var x: CGFloat = 0
         let chipHeight: CGFloat = 24
         // Çipler satıra dizilir, sığmayanı alt satıra iner (küçük pencerede iki satır olur).
-        for chip in chips.arrangedSubviews {
+        for chip in chipViews {
             var size = chip.intrinsicContentSize
             size.width = min(size.width, width)
             if x + size.width > width, x > 0 { x = 0; chipY += chipHeight + 6 }
@@ -654,10 +656,24 @@ final class DashboardView: NSView {
         return chipRowHeight + tileBlock + stripRowHeight + summaryRowHeight
     }
 
+    /// Çiplerin kaç satıra dizileceği: sığmayan alt satıra iner ve o satırın payı panonun
+    /// yüksekliğine de girmeli (ölçülen kusur: dar pencerede ilk çip satırı kırpılıyordu).
+    func chipRowsNeeded(forWidth width: CGFloat) -> Int {
+        var x: CGFloat = 0, rows = 1
+        for chip in chipViews {
+            let w = min(chip.intrinsicContentSize.width, max(60, width))
+            if x + w > width, x > 0 { rows += 1; x = 0 }
+            x += w + 8
+        }
+        return rows
+    }
+
     /// Bu görünüme biçilmiş genişlikte gereken yükseklik (katışık/alkaçlı mod hesaba katılır).
     func neededHeight(forWidth width: CGFloat) -> CGFloat {
         let tileH = compactTiles ? Self.shortTileHeight : Self.tileHeight
+        let extraChipRows = CGFloat(max(0, chipRowsNeeded(forWidth: width) - 1)) * (24 + 6)
         return Self.requiredHeight(width: width, tileH: tileH, tiles: compact ? 0 : tiles.count)
+            + extraChipRows
     }
 }
 
