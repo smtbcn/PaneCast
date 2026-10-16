@@ -80,8 +80,33 @@ final class SenderServerTests: XCTestCase {
         XCTAssertEqual(stopped, [])                                  // kapanış yayını durdurmadı
     }
 
-    func testOldVersionIsRejected() async throws {
-        let (srv, port) = server { _ in }
+    /// TV yayını **kendi başına** kestiğinde (kumandadan DURDUR) Mac'e `stopped` yazar.
+    /// Ölçülen kusur: bu mesaj hiç gönderilmiyordu; Mac "Yayında" kalıp pencereyi ağa
+    /// yazmayı sürdürüyordu. Mac yanıt olarak `stopped` geri YAZMAZ (döngü olmasın).
+    func testUnsolicitedStoppedFromTvStopsSenderWithoutEcho() async throws {
+        var stopped: [String] = []
+        let (srv, port) = server { stopped.append($0) }
+        defer { srv.stop() }
+        let (h, input) = try client(port)
+        send(h, ["t": "hello", "role": "receiver", "name": "test-tv", "ver": 2])
+        let ch = try await input.next()
+        let nonceMac = Data(base64Encoded: ch["nonce_mac"] as! String)!
+        let nonceTv = PairingCrypto.randomNonce()
+        send(h, ["t": "proof", "nonce_tv": nonceTv.base64EncodedString(),
+                 "proof": PairingCrypto.sessionProof(key, .reverse, .tv, serverNonce: nonceMac,
+                                                     clientNonce: nonceTv).base64EncodedString()])
+        let readyReply = try await input.next()
+        XCTAssertEqual(readyReply["t"] as? String, "ready")
+
+        send(h, ["t": "stopped", "reason": "kullanıcı DURDUR"])
+        try await Task.sleep(nanoseconds: 250_000_000)
+        XCTAssertEqual(stopped, ["127.0.0.1"], "TV'nin durdurma bildirisi yayını kesmeli")
+
+        let echo = try? await input.next()
+        XCTAssertNil(echo, "bildirim yanıt istemez: geri yazılırsa mesaj iki uçta döner")
+    }
+
+    func testOldVersionIsRejected() async throws {        let (srv, port) = server { _ in }
         defer { srv.stop() }
         let (h, input) = try client(port)
         send(h, ["t": "hello", "role": "receiver", "name": "x", "ver": 1])

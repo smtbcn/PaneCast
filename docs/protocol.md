@@ -57,7 +57,7 @@ sonrası kullanıcı kodu yazarken 180 sn bekler); doğrulanmış oturumda okuma
 | TV→Mac | `cap_error` | `reason,max_width,max_height,codecs` | TV bu profili reddetti |
 | TV→Mac | `idr_request` | — | paket kaybı: acil anahtar kare iste |
 | Mac→TV | `stop` | — | yayını durdur; yalnız doğrulanmış oturum (aksi `denied/not_paired`) |
-| TV→Mac | `stopped` | `reason?` | durdu |
+| TV→Mac | `stopped` | `reason?` | durdu — `stop`/`unpair` yanıtı **ve** TV'de kendiliğinden biten yayın (kumandadan DURDUR, yüzey kaybı, çözücü hatası). Mac bu mesajı görünce yayını keser; yanıt yazmaz |
 | Mac→TV | `unpair` | — | eşleşmeyi sil; yalnız doğrulanmış oturum. TV `stopped/unpaired` yazar, bağlantıyı kapatır |
 | çift | `ping`/`pong` | `now` | canlılık; doğrulama istemez, durum değiştirmez |
 

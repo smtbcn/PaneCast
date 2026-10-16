@@ -191,7 +191,12 @@ class MainActivity : Activity(), ControlLink.Listener {
 
     override fun onDenied(reason: String) {
         Log.w(TAG, "reddedildi: $reason")
-        ui.post { renderStatus() }
+        // Ölçülen kusur: red yalnız loglanıyordu; kullanıcı OK'a basıp ekranda hiçbir şey
+        // görmeden bekliyordu. Gerekçe artık tek satırda ekranda. (Çağrı okuma iş
+        // parçacığından gelir: çizim ana iş parçacığına taşınır.)
+        ui.post {
+            renderNote(ControlMessages.deniedText(reason), isError = ControlMessages.deniedNeedsAction(reason))
+        }
     }
 
     /**
@@ -249,7 +254,9 @@ class MainActivity : Activity(), ControlLink.Listener {
     }
 
     override fun onStopSession(reason: String) {
-        ui.post { stopStream(reason) }
+        // Bu üç yol zaten Mac'ten geldi (`stop`/`unpair` yanıtları ControlLink'te yazılıyor):
+        // geri bildirim göndermek mesajı iki katına çıkarır.
+        ui.post { stopStream(reason, notifySender = false) }
     }
 
     /** Çözücü kare alıyor ama üretmiyor.
@@ -301,13 +308,25 @@ class MainActivity : Activity(), ControlLink.Listener {
 
     override fun onClientDisconnected() {
         ui.post {
-            if (streaming) stopStream("istemci koptu")
+            // Bağlantı kapandı: bildirimin gideceği bir uç artık yok.
+            if (streaming) stopStream("istemci koptu", notifySender = false)
             renderStatus()
         }
     }
 
-    private fun stopStream(reason: String) {
+    /**
+     * Yayını keser.
+     *
+     * `notifySender`: yayın **bizim tarafımızdan** bittiğinde Mac'e `stopped` yazılır. Mac,
+     * kendi başlattığı duruşlarda (stop/unpair) yanıtı zaten aldığı için orada sessiz kalınır —
+     * aksi hâlde mesaj bir tur daha dönüp gereksiz `sender_stop` üretirdi. Bildirim olmadan
+     * ölçülen kusur: TV'de BACK ile yayın duruyor, Mac "Yayında" etiketiyle pencereyi ağa
+     * yazmayı sürdürüyordu.
+     */
+    private fun stopStream(reason: String, notifySender: Boolean = true) {
+        if (!streaming) return
         streaming = false
+        if (notifySender) control.notifyStopped(reason)
         releaseScreenWakeLock()
         media.stop()
         decoder.stop()
@@ -475,7 +494,7 @@ class MainActivity : Activity(), ControlLink.Listener {
                 headline = headline,
                 subline = subline,
                 note = channelDown?.let { "kontrol kanalı kapalı: $it — yeniden deneniyor" } ?: note,
-                noteIsError = channelDown != null,
+                noteIsError = channelDown != null || statusNoteIsError,
                 pin = currentPin ?: "······",
                 pinSecondsLeft = pinLeft,
                 cards = computers.map { c ->
@@ -651,16 +670,19 @@ class MainActivity : Activity(), ControlLink.Listener {
     /** Geçici satıraltı not: 8 sn sonra kendiliğinden söner (kalıcı durum sanılmasın). */
     private var clearNote: Runnable? = null
 
-    private fun renderNote(t: String) {
+    private fun renderNote(t: String, isError: Boolean = false) {
         statusNote = t
+        statusNoteIsError = isError
         renderStatus()
         clearNote?.let { ui.removeCallbacks(it) }
         clearNote = Runnable {
-            if (statusNote == t) { statusNote = ""; renderStatus() }
+            if (statusNote == t) { statusNote = ""; statusNoteIsError = false; renderStatus() }
         }.also { ui.postDelayed(it, 8_000) }
     }
 
     private var statusNote: String = ""
+    /// Not satırının tonu: kırmızı yalnız kullanıcı bir şey yapması gerektiğinde.
+    private var statusNoteIsError = false
 
 
     override fun onDestroy() {

@@ -135,6 +135,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                 guard let self, self.engine.isRunning else { return }
                 await self.engine.stop()          // TV bağlantısı zaten kapandı; bildirim gereksiz
                 self.tvInitiatedHost = nil
+                // Arayüz de durdurulan yayının arkasından sıfırlanmalı: rozet/düğme tek
+                // başına tazelenince özet satırı "Akış açık"ta kalıyordu.
+                self.setSummary("Hazır — soldan pencere, sağdan TV seç.", .idle)
+                self.summaryIsError = false
+                self.note("Yayın TV tarafında durduruldu.")
                 self.refreshRunButton()
             }
         }

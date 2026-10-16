@@ -96,6 +96,27 @@ fun main() {
     check("UP asla yutulmaz: durdur/çık ikilisinden biri",
           setOf(back(U, streaming = true), back(U, streaming = false)) == setOf(STOP, EXIT))
 
+    // 6) Mac'in red gerekçeleri ekranda okunur: ölçülen kusur — red yalnız loglanıyordu,
+    //    kullanıcı OK'a basıp boş ekranda bekliyordu.
+    val reasons = listOf("no_window_selected_on_sender", "not_paired", "auth_failed", "already_paired",
+                         "pin_expired", "locked", "version")
+    val texts = reasons.map { ControlMessages.deniedText(it) }
+    val allReasons = reasons + listOf("bad_json", "unexpected_message")
+    check("her bilinen gerekçe metin alıyor", allReasons.map { ControlMessages.deniedText(it) }.none { it.isBlank() })
+    check("anlamı farklı gerekçeler aynı satıra düşmüyor", texts.distinct().size == reasons.size)
+    check("protokol hataları tek satırda birleşiyor (bilinçli)",
+          ControlMessages.deniedText("bad_json") == ControlMessages.deniedText("unexpected_message"))
+    check("pencere seçili değil uyarısı çözümü de söylüyor",
+          ControlMessages.deniedText("no_window_selected_on_sender").contains("pencere seç"))
+    check("bilinmeyen gerekçe uydurulmuyor, aynen yazılır",
+          ControlMessages.deniedText("kotu_bir_sey") == "Mac reddetti: kotu_bir_sey")
+    check("boş gerekçe çökmez", ControlMessages.deniedText("") == "Mac isteği reddetti"
+            && ControlMessages.deniedText("?") == "Mac isteği reddetti")
+    check("tek satıra sığar", allReasons.map { ControlMessages.deniedText(it) }
+            .all { it.length <= 90 && !it.contains("\n") })
+    check("bekleme cezası kırmızı değil", !ControlMessages.deniedNeedsAction("locked"))
+    check("pencere seçimi kırmızı", ControlMessages.deniedNeedsAction("no_window_selected_on_sender"))
+
     println(if (failures == 0) "TAMAM: $checks denetim geçti" else "$failures/$checks denetim başarısız")
     if (failures > 0) kotlin.system.exitProcess(1)
 }

@@ -68,6 +68,15 @@ class ControlLink(storageDir: File, private val listener: Listener) {
     /** Alıcı UDP boşluk gördüğünde çağırır. */
     fun requestIdr() = send(Protocol.json(Msg.T to Msg.IDR_REQUEST))
 
+    /**
+     * Yayın **TV tarafında** bittiğinde Mac'e bildirir. Neden gerekli (ölçüldü, gerçek TV):
+     * kullanıcı kumandadan DURDUR'a basınca ya da yüzey/çözücü düştüğünde TV yayını kesiyor,
+     * Mac'e tek satır gitmiyordu — Mac sonsuza dek "Yayında" kalıp pencereyi ağa yazmayı
+     * sürdürüyordu. Yalnız Mac'ten gelen `stop`/`unpair` için bildirim zaten yanıt olarak
+     * gidiyordu; kendiliğinden duruşlarda hiçbir şey yoktu.
+     */
+    fun notifyStopped(reason: String) = send(Protocol.json(Msg.T to Msg.STOPPED, "reason" to reason))
+
     fun send(json: String): Boolean {
         // IDR isteği yalnız doğrulanmış uca gider; doğrulanmamış bir 7601 bağlantısı araya giremez.
         val w = (if (authed) writer else null) ?: outboundWriter ?: return false

@@ -27,7 +27,9 @@ import android.widget.TextView
  * ölçüm şeridi 4 sn dokunulmazınca kendiliğinden kaybolur.
  */
 class TvScreen(private val context: Context, private val ui: Handler) {
-    private companion object { const val STATS_VISIBLE_MS = 4_000L }
+    // Kullanıcı isteği: yayın sırasında ekrana gelen durum/ölçüm/kısayol katmanı 5 sn
+    // dokunulmazsa kendiliğinden kaybolur; herhangi bir tuş geri getirir.
+    private companion object { const val STATS_VISIBLE_MS = 5_000L }
 
     /** Bir bilgisayar kartının çizimi için gerekli en küçük veri. */
     data class Card(val name: String, val detail: String, val state: CardState)
@@ -314,21 +316,29 @@ class TvScreen(private val context: Context, private val ui: Handler) {
         }
     }
 
-    /** Ölçüm şeridi 4 sn hareketsiz kalınca kaybolur; tuşa basınca yeniden görünür olur. */
+    /**
+     * Ölçüm şeridi, ayrıntı katmanı ve kısayol sırası 5 sn hareketsiz kalınca **hep birlikte**
+     * kaybolur: yayın görüntüsü temiz kalsın. Eskiden ayrıntı katmanı açıkken katman hiç
+     * gizlenmiyordu ve kullanıcı MENU'yu kapayana kadar şeridi üstünde taşıyordu (kullanıcı
+     * isteği: "5 sn sonra otomatik kapansın ya da bi şekilde ben kapatabilmeliyim").
+     */
     private fun scheduleStatsHide() {
         hideStats?.let { ui.removeCallbacks(it) }
         hideStats = Runnable {
             statsStrip.visibility = View.GONE
-            if (detailBox.visibility == View.GONE) layer.visibility = View.INVISIBLE
+            layer.visibility = View.INVISIBLE
         }.also { ui.postDelayed(it, STATS_VISIBLE_MS) }
     }
 
-    /** Kullanıcı bir tuşa bastı: şerit geri gelsin ve yeniden saymaya başlasın. */
+    /**
+     * Kullanıcı bir tuşa bastı: kaplama geri gelir ve sayma yeniden başlar. MENU ile açılan
+     * ölçüm katmanı da bu yolla görünür olur; tuşa basılmayınca o da 5 sn sonra kaybolur.
+     */
     fun wakeStats() {
-        if (statsStrip.visibility == View.GONE && hideStats != null) {
-            statsStrip.visibility = View.VISIBLE
-            layer.visibility = View.VISIBLE
-        }
+        if (hideStats == null) return
+        layer.visibility = View.VISIBLE
+        statsStrip.visibility = View.VISIBLE
+        scheduleStatsHide()
     }
 
     fun view(): View = layer

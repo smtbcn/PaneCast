@@ -141,6 +141,13 @@ final class SenderServer {
             onTvStop?(host)
             onLog?("TV yayını durdurdu")
 
+        // TV yayını **kendi başına** kesti (kumandadan DURDUR, yüzey kaybı, çözücü hatası).
+        // Ölçülen kusur: bu mesaj hiç gelmediği için Mac "Yayında" etiketiyle pencereyi ağa
+        // yazmayı sürdürüyordu. Yanıt beklenmez; bağlantı açık, yayın kapanır.
+        case ("stopped", .ready(let host, _)):
+            onTvStop?(host)
+            onLog?("TV yayını durdurdu: \(m["reason"] as? String ?? "bildirim yok")")
+
         case ("ping", _):
             conn.send(["t": "pong", "now": Int(Date().timeIntervalSince1970 * 1000)])
 
