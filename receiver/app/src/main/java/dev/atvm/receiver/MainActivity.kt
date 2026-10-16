@@ -2,6 +2,7 @@ package dev.atvm.receiver
 
 import android.app.Activity
 import android.content.Context
+import android.content.res.Configuration
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.os.Bundle
@@ -18,6 +19,7 @@ import android.widget.FrameLayout
 import android.widget.TextView
 import java.net.Inet4Address
 import java.net.NetworkInterface
+import java.util.Locale
 
 /** PaneCast TV alıcısı.
  *  Durum makinesi: HAZIR → (eşleşme) PIN → YAYIN → HAZIR.
@@ -60,9 +62,48 @@ class MainActivity : Activity(), ControlLink.Listener {
     /// PIN sayacı: statsRunnable doldurur, ekran State üzerinden okur.
     private var pinLeft = 0
     private var pinLock = 0
+    /// Arayüz metinlerinin okunduğu bağlam: `onCreate`de kurulur, `--es lang` ile dili değişir.
+    private lateinit var texts: Context
+
+    /** Görünen dildeki metin. Biçimli satırlarda göstericiler numaralı (`%1$s`), çünkü Türkçe ve
+     *  İngilizcede sözcük sırası farklı; kataloğun iki kopyası da aynı sırayı taşımak zorunda. */
+    private fun text(res: Int, vararg args: Any): String =
+        if (args.isEmpty()) texts.getString(res) else texts.getString(res, *args)
+
+    /** Ondalı sayıda ayraç da görünen dile ait: Türkçede "59,8", İngilizcede "59.8". Yalnız arayüz
+     *  satırları bundan geçer; `logStats`/`Log.*` sayıları makine-okunur kalsın diye dokunulmuyor.
+     *  Ölçüm dilimleyicileri (`p50=` gibi) çözücünün kendi biçimlendirmesinden geliyor (§ raporda). */
+    private fun number(value: Double, digits: Int = 1): String =
+        String.format(texts.resources.configuration.locales.get(0), "%.${digits}f", value)
+
+    /**
+     * Yalnız hata-ayıklama: `am start --es lang tr|en …` ile GÖRÜNÜR dil sabitlenir ki iki dil
+     * TV'nin sistem ayarına dokunmadan ekran görüntülenebilsin.
+     *
+     * Neden "debug-only": uygulamanın kendi yolu bu extra'yı HİÇ göndermez (tek kaynak `am start`)
+     * ve değer hiçbir yere saklanmaz — her açılışta intent'ten okunur, sistem ayarı değişmez.
+     * `preview` bayrağının aksine derleme türüne göre süzülmüyor: sürüm derlemesinde de etkisiz
+     * kalmasının nedeni aynı şey, yani onu gönderen hiçbir arayüz düğmesi olmaması.
+     *
+     * Kullanıcı için dil Android'in standart davranışıyla SİSTEM YERELİNDEN gelir; TV'de ayrı bir
+     * dil anahtarı bilinçli olarak yok. `attachBaseContext` değil de burada: `Activity.attach()`
+     * `attachBaseContext`i `mIntent` atanmadan ÖNCE çağırıyor, orada intent okunamaz.
+     * Tuzak (`preview` bayrağıyla aynı): activity `singleTask`, koşan örnek yeniden kullanılır ve
+     * onCreate bir daha koşmaz → dili değiştirmeden önce `am force-stop app.panecast.receiver`.
+     */
+    private fun localizedContext(baseline: Context): Context {
+        val cfg = Configuration(baseline.resources.configuration)
+        when (intent?.getStringExtra("lang")?.lowercase(Locale.ROOT)) {
+            "tr" -> cfg.setLocale(Locale.forLanguageTag("tr"))
+            "en" -> cfg.setLocale(Locale.forLanguageTag("en"))
+            else -> return baseline
+        }
+        return baseline.createConfigurationContext(cfg)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        texts = localizedContext(this)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         buildUi()
 
@@ -125,7 +166,8 @@ class MainActivity : Activity(), ControlLink.Listener {
         // `singleTask` olduğu için koşan örnek yeniden kullanılır ve onCreate bir daha koşmaz:
         // önizlemeyi değiştirmeden önce `am force-stop app.panecast.receiver` gerekir.
         preview = if (isDebugBuild) intent?.getIntExtra("preview", 0) ?: 0 else 0
-        screen = TvScreen(this, ui)
+        // Ekran metinleri yerelleştirilmiş bağlamdan okunsun (`--es lang` oradan görünsün).
+        screen = TvScreen(texts, ui)
         // Kart seçimi = OK: framework odak araması ◀▶▲▼'yi kendisi yönetir.
         screen.onCardSelected = { pos -> startFromSelectedDevice(pos) }
         root.addView(surfaceView, FrameLayout.LayoutParams(-1, -1))
@@ -195,8 +237,46 @@ class MainActivity : Activity(), ControlLink.Listener {
         // görmeden bekliyordu. Gerekçe artık tek satırda ekranda. (Çağrı okuma iş
         // parçacığından gelir: çizim ana iş parçacığına taşınır.)
         ui.post {
-            renderNote(ControlMessages.deniedText(reason), isError = ControlMessages.deniedNeedsAction(reason))
+            renderNote(denialText(ControlMessages.denied(reason)),
+                isError = ControlMessages.deniedNeedsAction(reason))
         }
+    }
+
+    /**
+     * `DenyKey` → kaynak. Eşlemenin TEK yeri burası ve `when` önermeli: yeni bir red anahtarı
+     * eklenip yazısı unutulursa derleme durur. `unknown` dışında hiçbir anahtar `detail` almaz,
+     * dolayısıyla `%1$s`li satır yalnız Mac'in ham nedenini basar.
+     */
+    private fun denyRes(k: ControlMessages.DenyKey): Int = when (k) {
+        ControlMessages.DenyKey.noWindow -> R.string.deny_no_window
+        ControlMessages.DenyKey.notPaired -> R.string.deny_not_paired
+        ControlMessages.DenyKey.authFailed -> R.string.deny_auth_failed
+        ControlMessages.DenyKey.codeUsed -> R.string.deny_code_used
+        ControlMessages.DenyKey.codeExpired -> R.string.deny_code_expired
+        ControlMessages.DenyKey.locked -> R.string.deny_locked
+        ControlMessages.DenyKey.version -> R.string.deny_version
+        ControlMessages.DenyKey.protocol -> R.string.deny_protocol
+        ControlMessages.DenyKey.generic -> R.string.deny_generic
+        ControlMessages.DenyKey.unknown -> R.string.deny_unknown
+    }
+
+    private fun denialText(d: ControlMessages.Denial): String =
+        if (d.detail.isEmpty()) text(denyRes(d.key)) else text(denyRes(d.key), d.detail)
+
+    /**
+     * Yayın davetinin kurulum nedeninin ekrandaki satırı. Neden kodları `SenderConnector.ConnectFail`
+     * tarafında, yazılar katalogda; `when` önermeli olduğu için çevrilmemiş neden derlemeyi durdurur.
+     * Mac'in kendi gerekçesi (`detail`) uydurulmaz, `%1$s` ile aynen basılır.
+     */
+    private fun connectText(f: SenderConnector.Failure): String = when (f.kind) {
+        SenderConnector.ConnectFail.unresolved -> text(R.string.cast_fail_unresolved)
+        SenderConnector.ConnectFail.protoMismatch -> text(R.string.cast_fail_proto)
+        SenderConnector.ConnectFail.oldApp -> text(R.string.cast_fail_old_app)
+        SenderConnector.ConnectFail.badChallenge -> text(R.string.cast_fail_bad_challenge)
+        SenderConnector.ConnectFail.identity -> text(R.string.cast_fail_identity)
+        SenderConnector.ConnectFail.denied -> text(R.string.cast_fail_denied, f.detail)
+        SenderConnector.ConnectFail.unexpected -> text(R.string.cast_fail_unexpected, f.detail)
+        SenderConnector.ConnectFail.network -> text(R.string.cast_fail_network, f.detail)
     }
 
     /**
@@ -424,7 +504,9 @@ class MainActivity : Activity(), ControlLink.Listener {
         get() = (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
     private var preview = 0
 
-    /** Önizleme modunda gerçek yerine tasarım verisi çizilir (yalnız hata-ayıklama sürümü). */
+    /** Önizleme modunda gerçek yerine tasarım verisi çizilir (yalnız hata-ayıklama sürümü).
+     *  Metinler gerçek ekranların anahtarlarından gelir ki iki dil de ön izlemede sınanabilsin.
+     *  Bilgisayar ADLARI örnek veridir: gerçek listede ad mDNS'ten gelir ve hiç çevrilmez. */
     private fun previewState(kind: RemoteKeys.Screen): TvScreen.State {
         val cards = listOf(
             TvScreen.Card("Masaüstü-Mac", "192.0.2.10:7601", TvScreen.CardState.READY),
@@ -432,16 +514,19 @@ class MainActivity : Activity(), ControlLink.Listener {
         )
         return TvScreen.State(
             screen = kind,
-            headline = if (kind == RemoteKeys.Screen.READY) "Yayına hazır" else "Yayında",
-            subline = if (kind == RemoteKeys.Screen.READY) "eşleşilen: Masaüstü-Mac" else "",
-            note = if (kind == RemoteKeys.Screen.READY) "OK seçtiğin bilgisayarı çağırır" else "",
+            headline = text(if (kind == RemoteKeys.Screen.READY) R.string.home_headline_ready
+                            else R.string.cast_headline_live),
+            subline = if (kind == RemoteKeys.Screen.READY) text(R.string.home_subline_paired, "Masaüstü-Mac") else "",
+            note = if (kind == RemoteKeys.Screen.READY) text(R.string.home_note_ok_calls_selected) else "",
             noteIsError = false,
             pin = "123456", pinSecondsLeft = 120,
             cards = if (kind == RemoteKeys.Screen.READY) cards else emptyList(),
-            stats = "● YAYINDA  1920x1080@60  ·  fps 59,8  ·  giriş→render 112 ms",
-            detail = "çözücü: c2.vc.h264.decoder  ·  kareler: render=12.480 düşen=0\nağ: 412.907 paket  kayıp 0  yedek 3\n",
+            stats = text(R.string.cast_stats_strip, "1920x1080@60",
+                number(59.8), text(R.string.preview_sample_latency)),
+            detail = text(R.string.preview_detail_sample),
             showDetail = showDebug,      // MENU/INFO gerçekten katmanı açsın ki tasarım sınanabilsin
-            version = "ön izleme", addresses = "192.0.2.20",   // sürüm etiketi değil: hata-ayıklama karesi
+            version = text(R.string.preview_version_label),   // sürüm etiketi değil: hata-ayıklama karesi
+            addresses = "192.0.2.20",
         )
     }
 
@@ -461,39 +546,41 @@ class MainActivity : Activity(), ControlLink.Listener {
 
         when (kind) {
             RemoteKeys.Screen.STREAMING -> {
-                headline = "Yayında"; subline = ""
-                teknik.append("çözücü: ${decoder.selectedCodecName}  giriş→render: ${decoder.latencySummary()}\n")
-                teknik.append("kareler: render=${decoder.rendered.get()} çözücüde=${decoder.inFlight()} "
-                    + "gelen=${decoder.submitted.get()} düşen=${decoder.droppedQueueFull.get()} "
-                    + "hata=${decoder.decodeError.get()}\n")
-                teknik.append("ağ: ${media.summary()}\nses: ${audio.summary()}\n")
-                avClock?.let { teknik.append("senkron: görüntü ofseti ${it.displayOffsetMs} ms (◀ ▶ ile 10 ms)\n") }
+                headline = text(R.string.cast_headline_live); subline = ""
+                teknik.append(text(R.string.cast_detail_decoder,
+                    decoder.selectedCodecName, decoder.latencySummary()))
+                teknik.append(text(R.string.cast_detail_frames, decoder.rendered.get(), decoder.inFlight(),
+                    decoder.submitted.get(), decoder.droppedQueueFull.get(), decoder.decodeError.get()))
+                teknik.append(text(R.string.cast_detail_network, media.summary(), audio.summary(texts)))
+                avClock?.let { teknik.append(text(R.string.cast_detail_sync_offset, it.displayOffsetMs)) }
             }
             RemoteKeys.Screen.READY -> {
-                headline = if (computers.isEmpty()) "Mac aranıyor" else "Yayına hazır"
-                subline = if (control.peerName == "-") "eşleşme kayıtlı · bağlantı bekleniyor"
-                          else "eşleşilen: ${control.peerName}"
-                if (computers.isEmpty() && note.isEmpty()) note = "SEARCH ile yeniden ara · Mac'te bu TV'yi seçersen akış oradan da başlar"
-                teknik.append("eşleşme: ${control.peerName}  ·  kontrol tcp/${Protocol.CONTROL_PORT}  "
-                    + "medya udp/${Protocol.MEDIA_PORT}\n")
-                teknik.append("BACK tuşuna BASILI TUT: eşleşmeyi sil (onay sorulur)\n")
+                headline = text(if (computers.isEmpty()) R.string.home_headline_searching
+                                else R.string.home_headline_ready)
+                subline = if (control.peerName == "-") text(R.string.home_subline_waiting)
+                          else text(R.string.home_subline_paired, control.peerName)
+                if (computers.isEmpty() && note.isEmpty()) note = text(R.string.home_note_rescan_hint)
+                teknik.append(text(R.string.home_detail_session, control.peerName,
+                    Protocol.CONTROL_PORT, Protocol.MEDIA_PORT))
+                teknik.append(text(R.string.home_detail_hold_back))
             }
             RemoteKeys.Screen.PAIRING -> {
-                headline = "Eşleşme bekleniyor"
-                subline = "bu kodu Mac'teki Pane Cast penceresine gir"
-                if (pinLock > 0) note = "Çok fazla hatalı deneme · $pinLock sn sonra yeniden"
-                teknik.append("kod ${pinLeft} sn geçerli · OK: yeni kod\n")
+                headline = text(R.string.pair_headline)
+                subline = text(R.string.pair_subline)
+                if (pinLock > 0) note = text(R.string.pair_note_locked, pinLock)
+                teknik.append(text(R.string.pair_detail_code_valid, pinLeft))
             }
         }
-        teknik.append("Pane Cast ${packageInfoVersion()}  ·  IP ${local.ifEmpty { listOf("(yok)") }.joinToString(", ")}\n")
-        teknik.append("mDNS ${Protocol.SERVICE_TYPE}\n")
+        teknik.append(text(R.string.common_detail_identity, packageInfoVersion(),
+            local.ifEmpty { listOf(text(R.string.common_detail_no_address)) }.joinToString(", ")))
+        teknik.append(text(R.string.common_detail_mdns, Protocol.SERVICE_TYPE))
 
         screen.render(
             TvScreen.State(
                 screen = kind,
                 headline = headline,
                 subline = subline,
-                note = channelDown?.let { "kontrol kanalı kapalı: $it — yeniden deneniyor" } ?: note,
+                note = channelDown?.let { text(R.string.common_note_channel_down, it) } ?: note,
                 noteIsError = channelDown != null || statusNoteIsError,
                 pin = currentPin ?: "······",
                 pinSecondsLeft = pinLeft,
@@ -503,8 +590,8 @@ class MainActivity : Activity(), ControlLink.Listener {
                         detail = "${c.address}:${c.port}",
                         state = if (resuming) TvScreen.CardState.BUSY else TvScreen.CardState.READY)
                 },
-                stats = if (streaming) "● YAYINDA  ${decoder.lastProfile}  ·  "
-                        + "fps ${String.format("%.1f", lastFps)}  ·  ${decoder.latencySummary()}" else "",
+                stats = if (streaming) text(R.string.cast_stats_strip, decoder.lastProfile,
+                        number(lastFps), decoder.latencySummary()) else "",
                 detail = teknik.toString(),
                 showDetail = showDebug,
                 version = packageInfoVersion(),
@@ -537,13 +624,13 @@ class MainActivity : Activity(), ControlLink.Listener {
     private fun confirmUnpair() {
         unpairDialog?.dismiss()
         unpairDialog = android.app.AlertDialog.Builder(this)
-            .setTitle("Eşleşme silinsin mi?")
-            .setMessage("Bu TV ile Mac arasındaki eşleşme kaldırılır. Yayına devam etmek için TV ekranındaki kodu Mac'e yeniden girmen gerekir.")
-            .setPositiveButton("Sil") { _, _ ->
+            .setTitle(text(R.string.home_unpair_title))
+            .setMessage(text(R.string.home_unpair_message))
+            .setPositiveButton(text(R.string.home_unpair_confirm)) { _, _ ->
                 control.forgetPairing()
                 renderStatus()
             }
-            .setNegativeButton("Vazgeç", null)
+            .setNegativeButton(text(R.string.home_unpair_cancel), null)
             .show()
     }
 
@@ -597,11 +684,11 @@ class MainActivity : Activity(), ControlLink.Listener {
             // BACK yukarıda `RemoteKeys.backAction` ile iki dönemi birden tüketir; buraya düşmez.
             RemoteKeys.Command.SELECT -> when {
                 streaming -> Unit
-                control.isPaired && computers.isEmpty() -> rescan("liste boş — yeniden aranıyor")
+                control.isPaired && computers.isEmpty() -> rescan(text(R.string.home_note_list_empty))
                 else -> { control.displayPin(force = true); renderStatus() }
             }
             RemoteKeys.Command.MENU, RemoteKeys.Command.DETAIL -> { showDebug = !showDebug; renderStatus() }
-            RemoteKeys.Command.SEARCH -> rescan("yeniden taranıyor…")
+            RemoteKeys.Command.SEARCH -> rescan(text(R.string.home_note_rescanning))
             RemoteKeys.Command.STOP, RemoteKeys.Command.PLAY_PAUSE ->
                 if (streaming) stopStream("kumanda")
                 else if (!control.isPaired) { control.displayPin(force = true); renderStatus() }
@@ -655,9 +742,9 @@ class MainActivity : Activity(), ControlLink.Listener {
     private fun startFromSelectedDevice(pos: Int) {
         if (resuming || pos !in computers.indices) return
         val c = computers[pos]
-        val key = control.storedSessionKey() ?: run { renderNote("eşleşme anahtarı yok"); return }
+        val key = control.storedSessionKey() ?: run { renderNote(text(R.string.home_note_no_key)); return }
         resuming = true
-        renderNote("${c.name} çağrılıyor…")
+        renderNote(text(R.string.home_note_calling, c.name))
         Thread {
             // Çok arayüzlü bilgisayarda mDNS tek ve keyfi bir adres döndürüyor (ölçüldü: TV,
             // Mac'in sanal makine köprüsüne bağlanmaya çalıştı). Adın tüm adresleri çözülür,
@@ -672,8 +759,8 @@ class MainActivity : Activity(), ControlLink.Listener {
                 mine.firstOrNull() ?: "", Protocol.MEDIA_PORT, key, control)
             runOnUiThread {
                 resuming = false
-                if (err == null) renderNote("${c.name} çağrıldı — akış parametreleri bekleniyor")
-                else renderNote("başlatılamadı: $err", isError = true)
+                if (err == null) renderNote(text(R.string.home_note_called, c.name))
+                else renderNote(connectText(err), isError = true)
             }
         }.start()
     }

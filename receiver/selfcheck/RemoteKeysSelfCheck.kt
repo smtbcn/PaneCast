@@ -53,12 +53,20 @@ fun main() {
     }
 
     // 7) Rehber: tek sıra, kısa, duruma göre farklı; bilinmeyen tuş UNKNOWN.
+    //    Hücrelerin FİİLİ artık anahtar (`HintKey`): görünen cümle iki dilli katalogda
+    //    (res/values ile res/values-tr), JVM tarafında ölçülebileni anahtarın kimliği ve hücre sayısı.
     val ready = RemoteKeys.hints(RemoteKeys.Screen.READY, hasComputers = true)
     check("hazır rehberi boş değil", ready.isNotEmpty())
-    check("hazır rehberde OK var", ready.any { it.key == "OK" && it.action == "yayın başlat" })
+    check("hazır rehberde OK var", ready.any { it.key == "OK" && it.action == RemoteKeys.HintKey.okStart })
     check("arama tek kez ve kısa", ready.count { it.key == "SEARCH" } <= 1)
-    check("eşleşme silme rehberi bağırmıyor", ready.none { it.action.contains("sil") })
+    // Ölçülen tasarım kuralı: nadir bir işlem (eşleşme silme) şeritte hiç bağırmamalı.
+    // Eskiden "sil" sözcüğü aranuyordu; sözcük kataloga taşındığı için artık anahtar aranıyor.
+    check("eşleşme silme rehberi bağırmıyor",
+          ready.none { it.action.name.contains("unpair", ignoreCase = true) })
+    // Şerit TEK SIRA: hücre sayısı dilinden bağımsız üst sınır (yazı uzunluğu artık katalogda,
+    // iki dilin en uzun satırı res/values ile res/values-tr karşılaştırmasında ölçülüyor).
     check("rehber tek satıra sığacak kadar kısa",
+          RemoteKeys.hints(RemoteKeys.Screen.READY, true).size <= 4 &&
           RemoteKeys.hintsLine(RemoteKeys.Screen.READY, true).length < 80)
     check("Mac yoksa OK yerine arama önerilir",
           RemoteKeys.hints(RemoteKeys.Screen.READY, hasComputers = false).none { it.key == "OK" })
@@ -67,6 +75,16 @@ fun main() {
     check("PIN ekranı kısa", RemoteKeys.hints(RemoteKeys.Screen.PAIRING, false).size == 2)
     check("çift kayıt yok", ready.size == ready.map { it.key + it.action }.distinct().size)
     check("bilinmeyen tuş UNKNOWN", cmd(999) == RemoteKeys.Command.UNKNOWN)
+    // Her `HintKey` gerçekten bir ekran tarafından üretilmeli (katalogda ölü satır kalmasın) ve
+    // üretilen her anahtarın görünen yazısı `TvScreen.stringResOf`daki önermeli `when`te duruyor:
+    // Kotlin önermeli enum `when`inde eksik dal DERLEMEYİ durdurur, yani "çevrilmemiş ipucu"
+    // burada koşarken değil, derlerken yakalanır — bunu taklit eden bir runtime denetim yazılmadı.
+    val producedHints = buildSet {
+        for (s in RemoteKeys.Screen.values())
+            for (has in listOf(true, false)) addAll(RemoteKeys.hints(s, has).map { it.action })
+    }
+    check("ipucu anahtarları tükenmiş: üretilen küme = HintKey",
+          producedHints == RemoteKeys.HintKey.values().toSet())
 
     // 5) BACK karar makinesi — gerçek cihazda ölçülen kusurun kilidi: ACTION_UP tüketilip
     //    onKeyUp'a bırakıldığı için kumandadan durdur/çık hiç koşmuyordu.
@@ -97,25 +115,41 @@ fun main() {
           setOf(back(U, streaming = true), back(U, streaming = false)) == setOf(STOP, EXIT))
 
     // 6) Mac'in red gerekçeleri ekranda okunur: ölçülen kusur — red yalnız loglanıyordu,
-    //    kullanıcı OK'a basıp boş ekranda bekliyordu.
+    //    kullanıcı OK'a basıp boş ekranda bekliyordu. Satırın yazısı katalogda (`deny_*`),
+    //    burada ayırt edilen GEREKÇE → ANAHTAR eşlemesinin kendisi.
     val reasons = listOf("no_window_selected_on_sender", "not_paired", "auth_failed", "already_paired",
                          "pin_expired", "locked", "version")
-    val texts = reasons.map { ControlMessages.deniedText(it) }
+    val keys = reasons.map { ControlMessages.denied(it).key }
     val allReasons = reasons + listOf("bad_json", "unexpected_message")
-    check("her bilinen gerekçe metin alıyor", allReasons.map { ControlMessages.deniedText(it) }.none { it.isBlank() })
-    check("anlamı farklı gerekçeler aynı satıra düşmüyor", texts.distinct().size == reasons.size)
+    check("her bilinen gerekçe kendi satırını alıyor",
+          allReasons.map { ControlMessages.denied(it).key }
+              .none { it == ControlMessages.DenyKey.unknown || it == ControlMessages.DenyKey.generic })
+    check("anlamı farklı gerekçeler aynı satıra düşmüyor", keys.distinct().size == reasons.size)
     check("protokol hataları tek satırda birleşiyor (bilinçli)",
-          ControlMessages.deniedText("bad_json") == ControlMessages.deniedText("unexpected_message"))
+          ControlMessages.denied("bad_json") == ControlMessages.denied("unexpected_message"))
+    // "çözümü de söylüyor" artık cümlenin özelliği: deny_no_window iki dilde de çözüm fiilini
+    // taşıyor (katalog denetimi). Burada ayırt edilen, uyarının KENDİ anahtarına düşmesi —
+    // anahtar düşerse satır da yanlış okunur.
     check("pencere seçili değil uyarısı çözümü de söylüyor",
-          ControlMessages.deniedText("no_window_selected_on_sender").contains("pencere seç"))
+          ControlMessages.denied("no_window_selected_on_sender").key == ControlMessages.DenyKey.noWindow)
     check("bilinmeyen gerekçe uydurulmuyor, aynen yazılır",
-          ControlMessages.deniedText("kotu_bir_sey") == "Mac reddetti: kotu_bir_sey")
-    check("boş gerekçe çökmez", ControlMessages.deniedText("") == "Mac isteği reddetti"
-            && ControlMessages.deniedText("?") == "Mac isteği reddetti")
-    check("tek satıra sığar", allReasons.map { ControlMessages.deniedText(it) }
-            .all { it.length <= 90 && !it.contains("\n") })
+          ControlMessages.denied("kotu_bir_sey") ==
+              ControlMessages.Denial(ControlMessages.DenyKey.unknown, "kotu_bir_sey"))
+    check("boş gerekçe çökmez", ControlMessages.denied("").key == ControlMessages.DenyKey.generic
+            && ControlMessages.denied("?").key == ControlMessages.DenyKey.generic)
+    // Tek satır sınırı: Mac'ten gelen ham neden olduğu gibi ekrana basıldığı için içinde
+    // satır sonu bulunamaz (cümle uzunluğu artık katalogda denetleniyor).
+    check("tek satıra sığar", (allReasons + listOf("kotu_bir_sey", "")).map { ControlMessages.denied(it).detail }
+            .all { !it.contains("\n") })
     check("bekleme cezası kırmızı değil", !ControlMessages.deniedNeedsAction("locked"))
     check("pencere seçimi kırmızı", ControlMessages.deniedNeedsAction("no_window_selected_on_sender"))
+    // Her `DenyKey` bir yoldan üretilebiliyor (katalogda ölü satır yok); anahtar → kaynak
+    // eşlemesi `MainActivity.denyRes`deki önermeli `when`te ve eksik dal derlemeyi durdurur —
+    // önermelliliği taklit eden bir runtime denetim bilinçli olarak yazılmadı.
+    val producedDenials = (allReasons + listOf("", "?", "kotu_bir_sey"))
+        .map { ControlMessages.denied(it).key }.toSet()
+    check("red anahtarları tükenmiş: üretilen küme = DenyKey",
+          producedDenials == ControlMessages.DenyKey.values().toSet())
 
     // 7) mDNS çok adres döndürünce doğru aday önce denenmeli (ölçülen kusur: TV, Mac'in
     //    sanal makine köprüsüne bağlanmaya çalıştı ve OK hiçbir şey yapmıyordu).

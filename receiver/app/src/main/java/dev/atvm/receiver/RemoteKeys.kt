@@ -8,6 +8,8 @@ package dev.atvm.receiver
  *    "seç" demek DPAD_CENTER da olabilir ENTER, NUM_ENTER, SPACE veya BUTTON_A da.
  *    Tek koda bakmak, o kumandalarda tuşun ölü kalması demekti — "kafamıza göre" olan buydu.
  * 2. Sınıflandırma saf olduğu için JVM'de sınanabiliyor (cihaz, emülatör, ekran gerekmiyor).
+ * 3. Aynı nedenlerle burada hiç görünen metin yok: ekrana yazılan her satır iki dilli katalogda
+ *    (res/values ile res/values-tr) duruyor, bu dosya yalnız metnin ANAHTARINI üretiyor.
  *
  * Sabitler `android.view.KeyEvent` ile birebir aynıdır; yorumda karşılığı yazılıdır.
  * Framework'e ait olması gereken tuşlara (ses, kanal, güç) HİÇBİR zaman el konmaz:
@@ -146,8 +148,19 @@ object RemoteKeys {
     /** Ekranda hangi durumun geçerli olduğu; rehber bundan üretilir, elle yazılmaz. */
     enum class Screen { PAIRING, READY, STREAMING }
 
-    /** Bir rehber hücresi: tuş etiketi + tek fiil. Metin kısa tutulur (kullanıcı isteği). */
-    data class Hint(val key: String, val action: String)
+    /**
+     * Bir rehber hücresinin FİİLİNİN kimliği. Yazı burada durmuyor: bu dosya JVM'de, Android
+     * çatısı olmadan derlenip sınanıyor (`scripts/test-receiver-ui.sh`) ve `R.string`/`Context`
+     * taşıyamaz. Görünen satır `values`/`values-tr` kataloglarındaki `hint_*` anahtarlarındadır;
+     * anahtar → kaynak eşlemesi görünümde (`TvScreen.stringResOf`) ve `when` önermeli olduğu için
+     * çevrilmemiş ipucu derlemeyi durdurur.
+     */
+    enum class HintKey { okNewCode, okStart, backExit, backStop, lrSelect, lrSync,
+                         menuDetail, menuStats, searchMac }
+
+    /** Bir rehber hücresi: tuş etiketi + fiilin anahtarı. Metin kısa tutulur (kullanıcı isteği).
+     *  `key` çevrilmez: kumandanın üstündeki harf, yani veri. */
+    data class Hint(val key: String, val action: HintKey)
 
     /**
      * Alt şeridin tek sırası. Uzun cümle yok: kumanda tuşunun ADI ve tek fiil.
@@ -159,27 +172,31 @@ object RemoteKeys {
      */
     fun hints(screen: Screen, hasComputers: Boolean): List<Hint> = when (screen) {
         Screen.PAIRING -> listOf(
-            Hint("OK", "yeni kod"),
-            Hint("BACK", "çık"),
+            Hint("OK", HintKey.okNewCode),
+            Hint("BACK", HintKey.backExit),
         )
         Screen.READY -> buildList {
             if (hasComputers) {
-                add(Hint("OK", "yayın başlat"))
-                add(Hint("◀▶", "seç"))
+                add(Hint("OK", HintKey.okStart))
+                add(Hint("◀▶", HintKey.lrSelect))
             } else {
-                add(Hint("SEARCH", "Mac ara"))
+                add(Hint("SEARCH", HintKey.searchMac))
             }
-            add(Hint("MENU", "ayrıntı"))
-            add(Hint("BACK", "çık"))
+            add(Hint("MENU", HintKey.menuDetail))
+            add(Hint("BACK", HintKey.backExit))
         }.distinctBy { it.key + it.action }
         Screen.STREAMING -> listOf(
-            Hint("BACK", "durdur"),
-            Hint("MENU", "ölçüm"),
-            Hint("◀ ▶", "senkron"),
+            Hint("BACK", HintKey.backStop),
+            Hint("MENU", HintKey.menuStats),
+            Hint("◀ ▶", HintKey.lrSync),
         )
     }
 
-    /** Rehberi tek satır metne çevirir (erişilebilirlik/özet için). */
+    /**
+     * Rehberin KİMLİK satırı (görünüme çizilen metin değil): TvScreen şeridin değişip
+     * değişmediğini bundan anlıyor. Dile bağlı yazı taşımadığı için iki dilde de aynı
+     * kareyi verir — çeviriler için uzunluk sınırı artık katalogda (res/values, res/values-tr).
+     */
     fun hintsLine(screen: Screen, hasComputers: Boolean): String =
-        hints(screen, hasComputers).joinToString("   ") { "${it.key} · ${it.action}" }
+        hints(screen, hasComputers).joinToString("   ") { "${it.key} · ${it.action.name}" }
 }

@@ -1,4 +1,97 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Arayüz kataloğu: İngilizce VARSAYILANDIR, Türkçe values-tr/strings.xml'de durur.
+     İki dil de zorunlu eşidir (denetim: her `name` iki dosyada da var, `%N$` göstericileri
+     aynı sırada). Göstericiler NUMARALI (`%1$s`), çünkü Türkçe ile İngilizcede sözcük sırası
+     değişiyor; sıralı `%s` yanlış ögeyi basardı.
+     Geliştirici çıktısı (Log.i/Log.w/Log.e) burada durmaz ve yalnız Türkçe kalır.
+     Çok boşluklu satırlar çift tırnak içinde: Android tırnaksız metinde art arda boşluğu
+     tek boşluğa indirger, ölçüm şeritinin hizası bozulurdu. -->
 <resources>
+
+    <!-- === eşleşme ekranı (PIN) === -->
+    <string name="pair_chip">WAITING FOR PAIRING</string>
+    <string name="pair_headline">Waiting for pairing</string>
+    <string name="pair_subline">enter this code in the Pane Cast window on the Mac</string>
+    <string name="pair_pin_label">Enter this code in the Pane Cast window on your Mac</string>
+    <string name="pair_pin_timer">"this code is valid for %1$d s · OK: new code"</string>
+    <string name="pair_pin_timer_expired">"the code has expired · OK: new code"</string>
+    <string name="pair_note_locked">"Too many incorrect attempts · retry in %1$d s"</string>
+    <string name="pair_detail_code_valid">"code valid for %1$d s · OK: new code\n"</string>
+
+    <!-- === hazır ekranı (bilgisayar listesi) === -->
+    <string name="home_chip">READY</string>
+    <string name="home_headline_ready">Ready to broadcast</string>
+    <string name="home_headline_searching">Searching for a Mac</string>
+    <string name="home_subline_waiting">"pairing saved · waiting for the connection"</string>
+    <string name="home_subline_paired">"paired with: %1$s"</string>
+    <string name="home_note_rescan_hint">"SEARCH scans again · if you pick this TV on the Mac, the stream starts from there too"</string>
+    <string name="home_note_ok_calls_selected">OK calls the computer you selected</string>
+    <string name="home_note_list_empty">"list is empty — searching again"</string>
+    <string name="home_note_rescanning">scanning again…</string>
+    <string name="home_note_no_key">no pairing key</string>
+    <string name="home_note_calling">"calling %1$s…"</string>
+    <string name="home_note_called">"%1$s was called — waiting for the stream parameters"</string>
+    <string name="home_note_start_failed">"could not start: %1$s"</string>
+    <string name="home_detail_session">"pairing: %1$s  ·  control tcp/%2$d  media udp/%3$d\n"</string>
+    <string name="home_detail_hold_back">"HOLD BACK: forget the pairing (asks for confirmation)\n"</string>
+    <string name="home_unpair_title">Forget this pairing?</string>
+    <string name="home_unpair_message">The pairing between this TV and the Mac is removed. To broadcast again, enter the code on the TV screen into the Mac again.</string>
+    <string name="home_unpair_confirm">Forget</string>
+    <string name="home_unpair_cancel">Cancel</string>
+
+    <!-- === yayın ekranı === -->
+    <string name="cast_chip">ON AIR</string>
+    <string name="cast_headline_live">On air</string>
+    <string name="cast_stats_strip">"● ON AIR  %1$s  ·  fps %2$s  ·  %3$s"</string>
+    <string name="cast_detail_decoder">"decoder: %1$s  input→render: %2$s\n"</string>
+    <string name="cast_detail_frames">"frames: rendered=%1$d in decoder=%2$d received=%3$d dropped=%4$d errors=%5$d\n"</string>
+    <string name="cast_detail_network">"network: %1$s\naudio: %2$s\n"</string>
+    <string name="cast_detail_sync_offset">"sync: video offset %1$d ms (10 ms steps with ◀ ▶)\n"</string>
+
+    <!-- === durumdan bağımsız satırlar === -->
+    <string name="common_note_channel_down">"control channel is down: %1$s — retrying"</string>
+    <string name="common_detail_no_address">(none)</string>
+    <string name="common_detail_identity">"Pane Cast %1$s  ·  IP %2$s\n"</string>
+    <string name="common_detail_mdns">"mDNS %1$s\n"</string>
+
+    <!-- === kumanda rehberi (tuş adları çevrilmez: kumandada basılı harf) === -->
+    <string name="hint_ok_new_code">new code</string>
+    <string name="hint_ok_start">start broadcast</string>
+    <string name="hint_back_exit">exit</string>
+    <string name="hint_back_stop">stop</string>
+    <string name="hint_lr_select">select</string>
+    <string name="hint_lr_sync">sync</string>
+    <string name="hint_menu_detail">details</string>
+    <string name="hint_menu_stats">metrics</string>
+    <string name="hint_search_mac">find a Mac</string>
+
+    <!-- === Mac'in red gerekçeleri === -->
+    <string name="deny_no_window">"No window is selected on the Mac for broadcasting — pick one in the Mac app, then OK"</string>
+    <string name="deny_not_paired">"The Mac does not see this TV as paired — enter the TV's code into the Mac again"</string>
+    <string name="deny_auth_failed">"The Mac could not verify the pairing key — forget the pairing and pair again"</string>
+    <string name="deny_code_used">"This code was already used — press OK for a new code"</string>
+    <string name="deny_code_expired">"The code has expired — press OK for a new code"</string>
+    <string name="deny_locked">"Too many incorrect attempts — wait a moment and try again"</string>
+    <string name="deny_version">"The Mac and the TV versions do not match — update both sides"</string>
+    <string name="deny_protocol">"The Mac received an unexpected reply — try broadcasting again"</string>
+    <string name="deny_generic">The Mac refused the request</string>
+    <!-- Bilinmeyen gerekçe uydurulmaz: Mac'in yazdığı anahtar aynen basılır. -->
+    <string name="deny_unknown">"The Mac refused: %1$s"</string>
+
+    <!-- === yalnız hata-ayıklama ön izlemesi (preview bayrağı) === -->
+    <string name="preview_version_label">preview</string>
+    <string name="preview_sample_latency">"input→render 112 ms"</string>
+    <string name="preview_detail_sample">"decoder: c2.vc.h264.decoder  ·  frames: rendered=12,480 dropped=0\nnetwork: 412,907 packets  loss 0  resent 3\n"</string>
+
+    <!-- Görünen uygulama adı iki dilde de "Pane Cast": çevrilmez (translatable="false"). -->
     <string name="app_name" translatable="false">Pane Cast</string>
+    <string name="audio_summary">audio=%1$dKB/%2$dpkt hidden=%3$d late=%4$d peak=%5$d underruns=%6$d resync=%7$d jitter=%8$dms</string>
+    <string name="cast_fail_unresolved">The computer\'s address could not be resolved</string>
+    <string name="cast_fail_proto">The app on the computer uses a different protocol version — update it</string>
+    <string name="cast_fail_old_app">The app on the computer is too old — update it</string>
+    <string name="cast_fail_bad_challenge">Malformed challenge from the computer</string>
+    <string name="cast_fail_identity">The computer\'s identity could not be verified (not the paired Mac)</string>
+    <string name="cast_fail_denied">The computer refused: %1$s</string>
+    <string name="cast_fail_unexpected">Unexpected reply from the computer: %1$s</string>
+    <string name="cast_fail_network">Could not reach the computer: %1$s</string>
 </resources>

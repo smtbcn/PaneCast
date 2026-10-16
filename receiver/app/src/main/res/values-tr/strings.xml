@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Türkçe arayüz kataloğu: values/strings.xml (İngilizce) ile bire aynı `name` kümesini taşır;
+     satır sayıları ve `%N$` göstericilerinin sırası denetlenir. Göstericiler numaralı kalmak
+     zorunda: Türkçe ile İngilizcede sözcük sırası farklı.
+     Yazılar arayüzden DEVİRALINmıştır (kabul edildiği gibi): günlük kullanımda okunan metin
+     değiştirilmez. Uygulama adı çevrilmez (values/app_name translatable="false"). -->
+<resources>
+    <!-- === eşleşme ekranı (PIN) === -->
+    <string name="pair_chip">EŞLEŞME BEKLENİYOR</string>
+    <string name="pair_headline">Eşleşme bekleniyor</string>
+    <string name="pair_subline">"bu kodu Mac'teki Pane Cast penceresine gir"</string>
+    <string name="pair_pin_label">"Bu kodu Mac'teki Pane Cast penceresine girin"</string>
+    <string name="pair_pin_timer">"bu kod %1$d sn geçerli · OK: yeni kod"</string>
+    <string name="pair_pin_timer_expired">"kodun süresi doldu · OK: yeni kod"</string>
+    <string name="pair_note_locked">"Çok fazla hatalı deneme · %1$d sn sonra yeniden"</string>
+    <string name="pair_detail_code_valid">"kod %1$d sn geçerli · OK: yeni kod\n"</string>
+
+    <!-- === hazır ekranı (bilgisayar listesi) === -->
+    <string name="home_chip">HAZIR</string>
+    <string name="home_headline_ready">Yayına hazır</string>
+    <string name="home_headline_searching">Mac aranıyor</string>
+    <string name="home_subline_waiting">"eşleşme kayıtlı · bağlantı bekleniyor"</string>
+    <string name="home_subline_paired">"eşleşilen: %1$s"</string>
+    <string name="home_note_rescan_hint">"SEARCH ile yeniden ara · Mac'te bu TV'yi seçersen akış oradan da başlar"</string>
+    <string name="home_note_ok_calls_selected">"OK seçtiğin bilgisayarı çağırır"</string>
+    <string name="home_note_list_empty">"liste boş — yeniden aranıyor"</string>
+    <string name="home_note_rescanning">yeniden taranıyor…</string>
+    <string name="home_note_no_key">eşleşme anahtarı yok</string>
+    <string name="home_note_calling">"%1$s çağrılıyor…"</string>
+    <string name="home_note_called">"%1$s çağrıldı — akış parametreleri bekleniyor"</string>
+    <string name="home_note_start_failed">"başlatılamadı: %1$s"</string>
+    <string name="home_detail_session">"eşleşme: %1$s  ·  kontrol tcp/%2$d  medya udp/%3$d\n"</string>
+    <string name="home_detail_hold_back">"BACK tuşuna BASILI TUT: eşleşmeyi sil (onay sorulur)\n"</string>
+    <string name="home_unpair_title">Eşleşme silinsin mi?</string>
+    <string name="home_unpair_message">"Bu TV ile Mac arasındaki eşleşme kaldırılır. Yayına devam etmek için TV ekranındaki kodu Mac'e yeniden girmen gerekir."</string>
+    <string name="home_unpair_confirm">Sil</string>
+    <string name="home_unpair_cancel">Vazgeç</string>
+
+    <!-- === yayın ekranı === -->
+    <string name="cast_chip">YAYINDA</string>
+    <string name="cast_headline_live">Yayında</string>
+    <string name="cast_stats_strip">"● YAYINDA  %1$s  ·  fps %2$s  ·  %3$s"</string>
+    <string name="cast_detail_decoder">"çözücü: %1$s  giriş→render: %2$s\n"</string>
+    <string name="cast_detail_frames">"kareler: render=%1$d çözücüde=%2$d gelen=%3$d düşen=%4$d hata=%5$d\n"</string>
+    <string name="cast_detail_network">"ağ: %1$s\nses: %2$s\n"</string>
+    <string name="cast_detail_sync_offset">"senkron: görüntü ofseti %1$d ms (◀ ▶ ile 10 ms)\n"</string>
+
+    <!-- === durumdan bağımsız satırlar === -->
+    <string name="common_note_channel_down">"kontrol kanalı kapalı: %1$s — yeniden deneniyor"</string>
+    <string name="common_detail_no_address">(yok)</string>
+    <string name="common_detail_identity">"Pane Cast %1$s  ·  IP %2$s\n"</string>
+    <string name="common_detail_mdns">"mDNS %1$s\n"</string>
+
+    <!-- === kumanda rehberi (tuş adları çevrilmez: kumandada basılı harf) === -->
+    <string name="hint_ok_new_code">yeni kod</string>
+    <string name="hint_ok_start">"yayın başlat"</string>
+    <string name="hint_back_exit">çık</string>
+    <string name="hint_back_stop">durdur</string>
+    <string name="hint_lr_select">seç</string>
+    <string name="hint_lr_sync">senkron</string>
+    <string name="hint_menu_detail">ayrıntı</string>
+    <string name="hint_menu_stats">ölçüm</string>
+    <string name="hint_search_mac">"Mac ara"</string>
+
+    <!-- === Mac'in red gerekçeleri === -->
+    <string name="deny_no_window">"Mac'te yayınlanacak pencere seçili değil — Mac arayüzünden bir pencere seç, sonra OK"</string>
+    <string name="deny_not_paired">"Mac bu TV ile eşleşmiş saymıyor — TV'deki kodu Mac'e yeniden girin"</string>
+    <string name="deny_auth_failed">Mac eşleşme anahtarını doğrulayamadı — eşleştirmeyi silip yeniden eşleşin</string>
+    <string name="deny_code_used">Bu kod daha önce kullanıldı — OK ile yeni kod alın</string>
+    <string name="deny_code_expired">Kodun süresi doldu — OK ile yeni kod alın</string>
+    <string name="deny_locked">Çok fazla hatalı deneme — biraz bekleyip yeniden deneyin</string>
+    <string name="deny_version">Mac ile sürümler uyumsuz — iki tarafı da güncelleyin</string>
+    <string name="deny_protocol">Mac beklenmeyen bir yanıt aldı — yayını yeniden deneyin</string>
+    <string name="deny_generic">Mac isteği reddetti</string>
+    <!-- Bilinmeyen gerekçe uydurulmaz: Mac'in yazdığı anahtar aynen basılır. -->
+    <string name="deny_unknown">"Mac reddetti: %1$s"</string>
+
+    <!-- === yalnız hata-ayıklama ön izlemesi (preview bayrağı) === -->
+    <string name="preview_version_label">"ön izleme"</string>
+    <string name="preview_sample_latency">"giriş→render 112 ms"</string>
+    <string name="preview_detail_sample">"çözücü: c2.vc.h264.decoder  ·  kareler: render=12.480 düşen=0\nağ: 412.907 paket  kayıp 0  yedek 3\n"</string>
+    <string name="audio_summary">ses=%1$dKB/%2$dpkt gizlenen=%3$d geç=%4$d tepe=%5$d boşalış=%6$d hizalama=%7$d titreşim=%8$dms</string>
+    <string name="cast_fail_unresolved">Bilgisayarın adresi çözümlenemedi</string>
+    <string name="cast_fail_proto">bilgisayardaki uygulama farklı protokol sürümünde — güncelleyin</string>
+    <string name="cast_fail_old_app">bilgisayardaki uygulama eski sürüm — güncelleyin</string>
+    <string name="cast_fail_bad_challenge">Bilgisayardan bozuk challenge geldi</string>
+    <string name="cast_fail_identity">bilgisayarın kimliği doğrulanamadı (eşleşmiş Mac değil)</string>
+    <string name="cast_fail_denied">bilgisayar reddetti: %1$s</string>
+    <string name="cast_fail_unexpected">Bilgisayardan beklenmeyen yanıt: %1$s</string>
+    <string name="cast_fail_network">Bilgisayara ulaşılamadı: %1$s</string>
+</resources>

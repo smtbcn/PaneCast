@@ -596,7 +596,14 @@ class AudioRenderer {
             if (hal == Long.MIN_VALUE) "na" else String.format(Locale.ROOT, "%.0f", hal / 1e6))
     }
 
-    fun summary(): String =
-        "ses=${bytesWritten.get() / 1024}KB/${packets.get()}pkt gizlenen=${plc.get()} geç=${late.get()} " +
-            "tepe=${peakSample.get()} boşalış=${underruns()} hizalama=${resyncs.get()} titreşim=${jitterMs}ms"
+    /**
+     * Ses sayacının **ekranda görünen** satırı: etiketler katalogda, iki dilde. `context`
+     * MainActivity'nin yerelleştirilmiş bağlamıdır. Makine okuması (logcat) `stats()`te durur.
+     */
+    fun summary(context: android.content.Context): String =
+        context.getString(
+            R.string.audio_summary,
+            bytesWritten.get() / 1024, packets.get(), plc.get(), late.get(),
+            peakSample.get(), underruns(), resyncs.get(), jitterMs,
+        )
 }

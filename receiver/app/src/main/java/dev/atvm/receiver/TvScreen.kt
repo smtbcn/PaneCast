@@ -55,13 +55,35 @@ class TvScreen(private val context: Context, private val ui: Handler) {
     private val density = context.resources.displayMetrics.density
     private fun dp(v: Int): Int = (v * density).toInt()
 
+    /** Görünen dildeki metin. `context` MainActivity'nin yerelleştirilmiş bağlamıdır
+     *  (`--es lang` ön izlemesi orada kurulur), yani bu çağrı da o dili verir. */
+    private fun text(res: Int, vararg args: Any): String =
+        if (args.isEmpty()) context.getString(res) else context.getString(res, *args)
+
+    /**
+     * `HintKey` → kaynak. Eşlemenin TEK yeri burası ve `when` önermeli: yeni bir ipucu anahtarı
+     * eklenip yazısı unutulursa derleme durur, ekrana ham anahtar düşemez.
+     */
+    private fun stringResOf(k: RemoteKeys.HintKey): Int = when (k) {
+        RemoteKeys.HintKey.okNewCode -> R.string.hint_ok_new_code
+        RemoteKeys.HintKey.okStart -> R.string.hint_ok_start
+        RemoteKeys.HintKey.backExit -> R.string.hint_back_exit
+        RemoteKeys.HintKey.backStop -> R.string.hint_back_stop
+        RemoteKeys.HintKey.lrSelect -> R.string.hint_lr_select
+        RemoteKeys.HintKey.lrSync -> R.string.hint_lr_sync
+        RemoteKeys.HintKey.menuDetail -> R.string.hint_menu_detail
+        RemoteKeys.HintKey.menuStats -> R.string.hint_menu_stats
+        RemoteKeys.HintKey.searchMac -> R.string.hint_search_mac
+    }
+
     val legend = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
     }
     private val wordmark = label(22f, Color.WHITE, Typeface.create("sans-serif-medium", Typeface.BOLD)).apply {
         // Ölçülen kusur: etiket oluşturulup metni unutulmuş, üst solda yalnız mavi nokta duruyordu.
-        text = "Pane Cast"
+        // Uygulama adı iki dilde de "Pane Cast": katalogda translatable="false".
+        text = text(R.string.app_name)
     }
     private val stateChip = TextView(context).apply {
         textSize = 15f; setTextColor(Color.WHITE); setPadding(dp(14), dp(5), dp(14), dp(5))
@@ -72,7 +94,7 @@ class TvScreen(private val context: Context, private val ui: Handler) {
     private val subline = label(19f, 0xFFAFC4DE.toInt())
     private val noteLine = label(17f, 0xFFFFC46B.toInt())
     private val pinLabel = label(19f, 0xFFAFC4DE.toInt()).apply {
-        text = "Bu kodu Mac'teki Pane Cast penceresine girin"
+        text = context.getString(R.string.pair_pin_label)
         gravity = Gravity.CENTER
     }
     private val pinValue = TextView(context).apply {
@@ -208,20 +230,21 @@ class TvScreen(private val context: Context, private val ui: Handler) {
         val streaming = s.screen == RemoteKeys.Screen.STREAMING
         val tone = toneOf(s.screen)
 
-        stateChip.text = when (s.screen) {
-            RemoteKeys.Screen.PAIRING -> "EŞLEŞME BEKLENİYOR"
-            RemoteKeys.Screen.READY -> "HAZIR"
-            RemoteKeys.Screen.STREAMING -> "YAYINDA"
-        }
+        stateChip.text = text(when (s.screen) {
+            RemoteKeys.Screen.PAIRING -> R.string.pair_chip
+            RemoteKeys.Screen.READY -> R.string.home_chip
+            RemoteKeys.Screen.STREAMING -> R.string.cast_chip
+        })
         stateChip.background = round((tone and 0x00FFFFFF) or 0x33000000, 20, tone, 1)
-        techChip.text = if (streaming) "" else "Pane Cast ${s.version}  ·  ${s.addresses}"
+        techChip.text = if (streaming) ""
+                        else "${text(R.string.app_name)} ${s.version}  ·  ${s.addresses}"
 
         heroPairing.visibility = if (s.screen == RemoteKeys.Screen.PAIRING) View.VISIBLE else View.GONE
         heroReady.visibility = if (streaming) View.GONE else View.VISIBLE
         if (s.screen == RemoteKeys.Screen.PAIRING) {
             pinValue.text = s.pin
-            pinTimer.text = if (s.pinSecondsLeft > 0) "bu kod ${s.pinSecondsLeft} sn geçerli · OK: yeni kod"
-                            else "kodun süresi doldu · OK: yeni kod"
+            pinTimer.text = if (s.pinSecondsLeft > 0) text(R.string.pair_pin_timer, s.pinSecondsLeft)
+                            else text(R.string.pair_pin_timer_expired)
         } else {
             headline.text = s.headline
             subline.text = s.subline
@@ -326,10 +349,11 @@ class TvScreen(private val context: Context, private val ui: Handler) {
         }
     }
 
-    /** Alt rehber: tek sıra, her hücre [tuş] + tek fiil. */
+    /** Alt rehber: tek sıra, her hücre [tuş] + tek fiil. Tuş adı çevrilmez (kumandadaki harf). */
     private fun rebuildLegend(screen: RemoteKeys.Screen, hasComputers: Boolean, tone: Int) {
         legend.removeAllViews()
         RemoteKeys.hints(screen, hasComputers).forEach { h ->
+            val action = text(stringResOf(h.action))
             val cell = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(12), dp(6), dp(12), dp(6))
@@ -337,7 +361,7 @@ class TvScreen(private val context: Context, private val ui: Handler) {
                 addView(label(14f, 0xFFFFFFFF.toInt(), Typeface.create("sans-serif-medium", Typeface.BOLD)).apply {
                     text = h.key
                 })
-                addView(label(14f, 0xFF9FB4CE.toInt()).apply { text = h.action },
+                addView(label(14f, 0xFF9FB4CE.toInt()).apply { text = action },
                         LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(7) })
             }
             legend.addView(cell, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(10) })

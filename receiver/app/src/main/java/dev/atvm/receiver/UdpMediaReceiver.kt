@@ -226,7 +226,7 @@ class UdpMediaReceiver(
     fun unknownNalType(): Long = dp?.unknownNalType ?: 0
 
     fun summary(): String =
-        "pkt=${packetsReceived.get()} au=${accessUnits.get()} sesPkt=${audioPackets.get()} " +
+        "pkt=${packetsReceived.get()} au=${accessUnits.get()} audioPkt=${audioPackets.get()} " +
             "bytes=${bytesReceived.get() / 1024}KB " +
             "gap=${gapCount()} ${nackStats()} bad=${dp?.malformed ?: 0} idrReq=${keyFrameRequests.get()}"
 
