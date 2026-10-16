@@ -81,7 +81,16 @@ class TvScreen(private val context: Context, private val ui: Handler) {
         maxLines = 1; setSingleLine(true)
     }
     private val pinTimer = label(16f, 0xFF7F93AE.toInt()).apply { gravity = Gravity.CENTER }
-    private val cardRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+    // Odaklı kart %3 büyüyor + 3dp halka taşıyor: satırda yer açılmaz ve çocuk kesilmezse
+    // kartın sol/üst kenarı kırpılıyor (ölçüldü: odaklı kartın sol kenarında mavi halka
+    // tamamen kayboluyor, siyahtan direkt doluya geçiliyordu).
+    private val cardRow = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER
+        setPadding(dp(14), dp(14), dp(14), dp(14))
+        clipChildren = false
+        clipToPadding = false
+    }
     private val statsStrip = label(15f, 0xFFDCE9F7.toInt()).apply {
         setPadding(dp(14), dp(6), dp(14), dp(6)); gravity = Gravity.CENTER
     }
@@ -98,14 +107,16 @@ class TvScreen(private val context: Context, private val ui: Handler) {
     }
     private val heroReady = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; visibility = View.GONE
+        clipChildren = false
     }
-    private val middle = FrameLayout(context)
+    private val middle = FrameLayout(context).apply { clipChildren = false }
     private val topBar = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
     }
     private val layer = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(48), dp(30), dp(48), dp(24))
+        clipChildren = false
     }
 
     private var lastLegendKey = ""
@@ -282,13 +293,20 @@ class TvScreen(private val context: Context, private val ui: Handler) {
                 setOnFocusChangeListener { v, has ->
                     v.background = if (has) round(0xFF17263D.toInt(), 18, 0xFF6FA8FF.toInt(), 3)
                                    else round(0xFF0F1A2B.toInt(), 18, 0xFF24344D.toInt(), 1)
-                    v.scaleX = if (has) 1.04f else 1.0f
-                    v.scaleY = if (has) 1.04f else 1.0f
+                    // Ölçek 1,04'te kart yuvasından ~9 px taşıyordu; 1,03 + gölge, halkayı
+                    // kesmeden aynı "önde durma" hissini veriyor.
+                    v.scaleX = if (has) 1.03f else 1.0f
+                    v.scaleY = if (has) 1.03f else 1.0f
+                    v.elevation = if (has) dp(10).toFloat() else 0f
                 }
             }
             card.background = round(0xFF0F1A2B.toInt(), 18, 0xFF24344D.toInt(), 1)
+            card.clipChildren = false
             cardRow.addView(card, LinearLayout.LayoutParams(-2, -2, 0f).apply {
-                marginEnd = dp(16)
+                // Yalnız marginEnd verilmişti: grup sağa kayık duruyor ve ilk kartın solu
+                // kesik görünüyordu. Boşluk artık iki yanda eşit.
+                marginStart = dp(8)
+                marginEnd = dp(8)
                 width = dp(232)          // eşit kart genişliği: odak çerçevesi de eşit görünsün
             })
             if (index == 0 && rootFocus == null) card.requestFocus()
