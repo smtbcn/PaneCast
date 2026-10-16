@@ -3,7 +3,10 @@
 # dist/RELEASE_NOTES.md (from docs/release-notes-template.md).
 #
 # Usage:  ./scripts/release-all.sh
-# Optional: RELEASE_CHANGES_FILE=<markdown file> for the "What's new" section.
+# Optional: RELEASE_CHANGES_FILE=<markdown file> for the "What's new" section and
+#           RELEASE_CHANGES_TR_FILE=<markdown file> for its Turkish twin ("Neler yeni").
+# The notes are bilingual by design: the template carries both languages, so a release
+# that skips the Turkish file publishes an English-only note — the script warns loudly.
 # Publishing is a separate, manual step: see docs/RELEASING.md.
 set -euo pipefail
 
@@ -29,15 +32,31 @@ else
   echo "warning: RELEASE_CHANGES_FILE not set, release notes get a placeholder 'What's new' section" >&2
 fi
 
-PANECAST_VERSION="$VERSION" PANECAST_CHANGES="$CHANGES" \
+CHANGES_TR="Bu sürüm için Türkçe not girilmedi."
+if [[ -n "${RELEASE_CHANGES_TR_FILE:-}" ]]; then
+  CHANGES_TR="$(cat "$RELEASE_CHANGES_TR_FILE")"
+else
+  echo "warning: RELEASE_CHANGES_TR_FILE not set — the Turkish section of the release notes will be empty" >&2
+fi
+
+PANECAST_VERSION="$VERSION" PANECAST_CHANGES="$CHANGES" PANECAST_CHANGES_TR="$CHANGES_TR" \
 PANECAST_MACOS_STATUS="$(cat "$ROOT/artifacts/release-macos/status.txt")" \
 PANECAST_SUMS="$DIST/SHA256SUMS.txt" PANECAST_TEMPLATE="$TEMPLATE" PANECAST_NOTES="$DIST/RELEASE_NOTES.md" \
 /usr/bin/python3 - <<'PY'
 import os
 t = open(os.environ["PANECAST_TEMPLATE"], encoding="utf-8").read()
+status = os.environ["PANECAST_MACOS_STATUS"].strip()
+# Durum satırı İngilizce üretiliyor (release-macos.sh); Türkçe bölümde çevrilmiş hâli görünsün.
+# Bilinmeyen bir cümle gelirse çeviri uydurulmaz, İngilizce metin kalır.
+STATUS_TR = {
+    "Developer ID signed, notarized and stapled.":
+        "Developer ID ile imzalı, Apple tarafından noter onaylı ve dosyaya demetlenmiş.",
+}
 values = {
     "{{CHANGES}}": os.environ["PANECAST_CHANGES"].strip(),
-    "{{MACOS_STATUS}}": os.environ["PANECAST_MACOS_STATUS"].strip(),
+    "{{CHANGES_TR}}": os.environ["PANECAST_CHANGES_TR"].strip(),
+    "{{MACOS_STATUS}}": status,
+    "{{MACOS_STATUS_TR}}": STATUS_TR.get(status, status),
     "{{CHECKSUMS}}": open(os.environ["PANECAST_SUMS"], encoding="utf-8").read().strip(),
     "{{VERSION}}": os.environ["PANECAST_VERSION"],
 }

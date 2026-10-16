@@ -1,5 +1,7 @@
 # Releasing PaneCast
 
+> English original. Türkçe: [RELEASING.tr.md](RELEASING.tr.md)
+
 Release artifacts are built and signed **locally by the maintainer**. Nothing here runs in CI
 and no signing material is ever committed (`dist/`, `*.jks`, `*.keystore`, `*.p12`,
 `receiver/keystore.properties`, `scripts/*.local.*` are gitignored).
@@ -63,7 +65,10 @@ warning (it never falls back to the debug key) and `scripts/release-android.sh` 
 
 ## Release checklist
 
-1. Set the new version in `VERSION` (e.g. `0.1.0`). Write the "What's new" text into a file (used as `RELEASE_CHANGES_FILE` below).
+1. Set the new version in `VERSION` (e.g. `0.1.0`). Write the "What's new" text into a file (used as
+   `RELEASE_CHANGES_FILE` below) **and its Turkish counterpart into the sibling file**
+   (`whats-new-<version>.tr.md`, used as `RELEASE_CHANGES_TR_FILE`). The release notes are bilingual: a
+   release published without the Turkish file carries an empty "Neler yeni" section, and the script warns.
 2. Clean checks:
    ```bash
    python3 scripts/scrub-personal-data.py --check --worktree
@@ -79,7 +84,8 @@ warning (it never falls back to the debug key) and `scripts/release-android.sh` 
    expensive, and a pushed employer address cannot be taken back.
 3. Build everything:
    ```bash
-   RELEASE_CHANGES_FILE=path/to/whats-new.md ./scripts/release-all.sh
+   RELEASE_CHANGES_FILE=path/to/whats-new.md \
+   RELEASE_CHANGES_TR_FILE=path/to/whats-new.tr.md ./scripts/release-all.sh
    ```
    This runs `release-macos.sh` (universal arm64 + x86_64, hardened runtime, notarize, staple,
    dmg + zip) and `release-android.sh` (signed APK + AAB, `apksigner verify`), then writes

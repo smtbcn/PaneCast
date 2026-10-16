@@ -43,6 +43,16 @@ Check downloads against `SHA256SUMS.txt` from the same release.
 3. Start a cast from either side: choose a window on the Mac, or ask for a stream from the TV.
 4. The window shows full-screen on the TV with its audio. Stop from either side.
 
+## Language
+
+Both apps speak Turkish and English. The macOS sender follows your system language and has a
+**Dil · Sistem / English / Türkçe** popup in the header row that switches the whole interface live —
+including the numbers ("23,4 Mbps", "%12" in Turkish; "23.4 Mbps", "12%" in English). The Android TV
+receiver follows the TV's system language: put the TV in Turkish for Turkish screens, English for
+English ones. Diagnostic output that is not on screen — the sender's raw log file and the receiver's
+`logcat` lines — stays Turkish, because it is written for whoever reads a bug report, not for the
+person holding the remote.
+
 ## Requirements
 
 | | Minimum |

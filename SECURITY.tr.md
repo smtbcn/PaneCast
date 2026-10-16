@@ -1,10 +1,12 @@
 # Güvenlik politikası
 
+> Türkçesi bu dosya; İngilizce aslı: [SECURITY.md](SECURITY.md)
+
 PaneCast **yalnızca yerel ağ** için tasarlanmıştır. İnternet dinleyicisi, bulut,
 hesap, telemetri ve uzak erişim yoktur.
 
 ## Desteklenen sürüm
-Bu proje erken aşamadadır (M1 doğrulandı). Yalnız en son `main` desteklenir.
+Bu proje etiketli bir sürüm hattından yayımlanır (şu an 0.2.x hattı; güncel değer `VERSION` içinde). Yalnız en yeni sürüm ve `main` desteklenir — eski sürümler yama almaz, yayın öncesi derlemeler güvenlik garantisi taşımaz.
 
 ## Raporlama
 Güvenlik açığını **public issue olarak açma**. Repo sahibinin GitHub profilindeki e-posta
@@ -33,7 +35,7 @@ Saldırgan, Mac ve TV ile **aynı yerel ağda** varsayılır.
 | Sürüm | Eski protokol (v1) uçları `denied/version` alır; v1 anahtarları geçersizdir (TV ilk açılışta siler). |
 | Anahtar saklama | Mac: macOS Anahtar Zinciri (`dev.atvm.sender`, hesap = TV IP'si); erişim imzalayan kimliğe bağlı. Eski `paired_keys.json` taşınır ve silinir. TV: uygulamaya özel dizin (`pair_key_v2.bin`), `allowBackup="false"`. |
 | Loglar | PIN, anahtar ve ekran içeriği loglanmaz. Tek istisna: **debug** derlemesi otomatik test için eşleştirme kodunu logcat'e yazar; release derlemesi yazmaz. |
-| macOS izni | Ekran kaydı yalnız kullanıcı izniyle; ret durumunda yayın başlamaz. Yayın ancak Mac'te bir pencere seçiliyken başlar. |
+| macOS izni | Ekran Kaydı yalnız kullanıcı izniyle; ret durumunda yayın başlamaz. Bir pencerenin kendi sesini yayınlamak ayrıca Sistem Ses Kaydı izni ister; izin yoksa görüntü akmaya devam eder, ses kanalı sessiz kalır. Yayın ancak Mac'te bir pencere (ya da TV ekranı) seçiliyken başlar. |
 | Tarama | Cihaz keşfi mDNS ile yapılır; **ağ taraması / kimlik denemesi yapılmaz**. |
 
 ## Korunmayanlar (kabul edilen açıklar)

@@ -1,5 +1,7 @@
 # PaneCast — katkı rehberi
 
+> Türkçesi bu dosya; İngilizce aslı: [CONTRIBUTING.md](CONTRIBUTING.md)
+
 Kullanıcı belgeleri: [README.md](README.md) (English) · [README.tr.md](README.tr.md). Yayın süreci: [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Ne arıyoruz
@@ -10,7 +12,7 @@ değil; ölçülmüş iyileştirme.
 1. **Lisans:** GPL/AGPL kod derlemeye giremez. Depoda yalnızca kendi yazdığımız kod
    vardır; üçüncü bir projeden satır alınırsa telif bildirimi o anda eklenir.
 2. **Yayın temizliği:** Depoda başka bir uygulamanın/projenin adı ve kişisel ya da
-   cihaz/ağ kimliği geçmez. Denetim her commit ve push'ta çalışır:
+   cihaz/ağ kimliği geçmez. Denetim (`scripts/scrub-personal-data.py`) her commit'te (`--check --worktree`) ve her push'ta (`--check --all-history`) koşar; bir sızıntı sonradan bulunmak yerine commit'i durdurur.
 3. **Kanıt etiketi:** Her sayının kaynağı belirtilir — **Ölçüldü / Beyan (cihaz XML'i) /
    Hedef / Doğrulanamadı / Engellendi**. Çalıştırmadığın kodu "çalışıyor" yazma.
 4. **Desteklenmeyeni desteklenmiş gösterme** (küçültülmüş pencere, Space, Windows tarafı).
@@ -29,7 +31,7 @@ cd receiver && gradle assembleDebug               # GRADLE_USER_HOME ile önbell
 <sender> mirror --tv <ip> --source synthetic   # izin gerektirmeden uçtan uca hat
 <sender> mirror --tv <ip> --window <id>        # gerçek pencere (Ekran Kaydı izni gerekir)
 ```
-CI (`.github/workflows/ci.yml`): alıcı derlemesi + `scripts/test-receiver-reorder.sh`, yayıncı `swift build` + `swift test`.
+CI (`.github/workflows/ci.yml`) üç iş koşar: depo temizliği (kişisel veri denetimi), alıcı derlemesi + `scripts/test-receiver-reorder.sh`, ve yayıncı `swift build` + `swift test`.
 Gerçek TV gerektiren testler CI'da koşmaz ve "doğrulandı" sayılmaz.
 `<sender>`: `artifacts/build/PaneCast.app/Contents/MacOS/PaneCast`.
 

@@ -1,5 +1,7 @@
 # PaneCast Protokolü v2
 
+> Türkçesi bu dosya; İngilizce aslı: [protocol.md](protocol.md)
+
 Tek kaynak spesifikasyon. Uygulamalar:
 - macOS: `src/sender-macos/Sources/ATVMSender/{Pairing,KeyStore,ControlClient,SenderServer,Transport,RtpRetransmit}.swift`
 - Android TV: `receiver/app/src/main/java/dev/atvm/receiver/{Protocol,PasskeyPairing,Pairing,ControlLink,SenderConnector,RtpDepacketizer,VideoReorderBuffer}.kt`
@@ -27,7 +29,7 @@ SYN'i düşdü (ölçüldü: Mac'ten kendi LAN IP'ne bağlantı var, TV'den 6 sn
 - TV alıcı uygulaması açılınca `_atvm._tcp` servisini yayınlar:
   `serviceName = "ATVM-<Build.MODEL>"`, `port = 7601`, TXT: `ver`, `cport`, `mport`.
 - Mac yayınları tarar (`NWBrowser(.bonjour(type:"_atvm._tcp", domain:"local."))`).
-- Yedek 1: Mac, TV'nin yerleşik yayın kaydını (`_googlecast._tcp`) tarayıp IP'yi bulabilir (Doğrulandı: TXT alanında cihaz modeli ve port 8009).
+- Yedek 1: bağlantı yardımcı betiği (`scripts/tv-connect.sh`), TV'nin yerleşik yayın hizmet kaydını tarayıp IP'sini oradan okur (Doğrulandı: TXT alanında cihaz modeli ve port 8009). Yayıncı uygulamanın kendisi o kaydı taramaz — yalnız `_atvm._tcp` tarar.
 - Yedek 2: elle IP girişi (görev gereği).
 
 ## 3. Kontrol mesajları
@@ -140,8 +142,9 @@ session       : SHA-256("atvm-fp-v2" ‖ K) ilk 4 bayt, hex (anahtar baytı gös
 
 ### 3.3 Anahtar saklama
 
-- **Mac:** macOS Anahtar Zinciri, `kSecClassGenericPassword`, servis `dev.atvm.sender` (uygulama paketi
-  kimliği), hesap = TV'nin IPv4 adresi, değer = 32 baytlık `K`. Erişim izni imzalayan kimliğe bağlıdır:
+- **Mac:** macOS Anahtar Zinciri, `kSecClassGenericPassword`, servis `dev.atvm.sender` (bu, ilk sürümden
+  kalan Anahtar Zinciri servis adıdır — uygulamanın paketi değil; paket kimliği `app.panecast.sender`),
+  hesap = TV'nin IPv4 adresi, değer = 32 baytlık `K`. Erişim izni imzalayan kimliğe bağlıdır:
   aynı geliştirici kimliğiyle yeniden derlenen paket kaydı sormadan okur (başka yoldan ve farklı derlemeyle
   doğrulandı). İmzasız (ad-hoc) derlemede imza her derlemede değiştiği için macOS'un izin sormasını
   bekliyoruz (doğrulanmadı). Önceki sürümün
@@ -182,7 +185,7 @@ ağ sırası = büyük uçlu), interleaved stereo. Paket **5 ms = 240 örnek/kan
 (kesinti olursa damga atlar, bkz. §5).
 
 - Kaynak (yayıncı): **Core Audio süreç tap'i** (macOS 14.2+). Yakalanan uygulamanın tüm ses süreçleri
-  (Chrome'da yardımcı süreç, Safari'de WebKit GPU servisi gibi) tek stereo karışım olarak alınır; aynı tap o süreçleri
+  (tarayıcı yardımcı süreci, WebKit GPU servisi gibi) tek stereo karışım olarak alınır; aynı tap o süreçleri
   Mac'te de susturur (`mutedWhenTapped`, yayın bitince ya da yayıncı ölünce kalkar). Tap kurulamazsa yedek
   ScreenCaptureKit sesidir; yedek yolda **Mac'te susturma yoktur**. Ses uygulama düzeyindedir, sekme ayrımı yoktur.
 - Dönüşüm: float32 → int16, kırpma + TPDF dither (tam sıfır girdi sıfır kalır).
@@ -276,9 +279,9 @@ birikintisi, kayıpla ilgisiz).
   yeniden gönderimleri 30 ms'den geç geldi; bu, vazgeçme yolunun gerçek ağda da çalıştığını gösterir.
 - Aşırı kayıp (`ATVM_DROP_VIDEO_PCT=40`, 25 sn): çözücüye yalnızca 3 AU verildi (≈ 1500 kare üretildi); P kareleri
   IDR gelene dek tutuldu, `idr_request` 300 ms aralıkla gitti (82 istek). Yani bozuk kare beslenmedi.
-- Gerçek pencere (QuickTime penceresi, 1080p60 profili): `=1` → gap 473, rtx 473, unrec 0, idr 1; `=3` → gap 150, rtx 150,
+- Gerçek pencere (video oynatıcı penceresi, 1080p60 profili): `=1` → gap 473, rtx 473, unrec 0, idr 1; `=3` → gap 150, rtx 150,
   unrec 0, idr 1; ses paketleri etkilenmedi (gönderilen 12187 / alınan 12076, alıcı satırı ~1 sn geriden okur).
-  Bu koşularda içerik koşudan koşuya değişti (QuickTime penceresi bazen durağan), bu yüzden gecikme karşılaştırması yalnız sentetik tabloda yapıldı.
+  Bu koşullarda içerik koşudan koşuya değişti (oynatıcı penceresi bazen durağandı), bu yüzden gecikme karşılaştırması yalnız sentetik tabloda yapıldı.
 - Doğrulanamadı: gerçek içerikte kayıp-sonrası görüntünün gözle bozulmaması (`screencap` video katmanını yakalamaz); yerine sayaçlar
   (IDR istekleri yalnız `unrec` ile arttı, kapı dışı AU çözücüye gitmedi) kullanıldı.
 
@@ -317,7 +320,7 @@ audio_ts = audio_rtp_base + round((ilk_örnek_host_sn      - kök_sn) * 48000)  
 - `sync` yoksa ya da `0` ise tabanlar anlamsızdır; eski alıcılar yeni alanları yok sayar (§7) ve akışlar
   eskisi gibi damga-bağımsız oynatılır.
 - Alıcı (AvClock): `m` µs yerelde `m·1000 + P` ns'de çalınır/gösterilir; P = max(ses yolu, görüntü yolu), canlı
-  ölçülür. Bu TV'de ses yolu (HAL ~110 ms) baskın olduğu için görüntü çözücü GİRİŞİNDE ~160 ms bekletilir
+  ölçülür. Bu TV'de ses yolu (HAL ~100 ms; `AvClock.kt` ölçüm notu) baskın olduğu için görüntü çözücü GİRİŞİNDE ~160 ms bekletilir
   (`releaseOutputBuffer(i, gelecek_ns)` bu çözücüde kare üretimini çökertti). Ölçüldü (2026-10-11, 40 sn, yazılım
   damgaları): avErr p50 ≈ −1 ms, |p95| 4–8 ms; cam→cam hizası insan kontrolü ister (ADR-006).
 

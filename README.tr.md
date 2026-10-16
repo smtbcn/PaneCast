@@ -43,6 +43,15 @@ Son sürümü [GitHub Releases](../../releases) sayfasından alın:
 3. Yayını iki taraftan da başlatabilirsiniz: Mac'te bir pencere seçin ya da TV'den yayın isteyin.
 4. Pencere TV'de tam ekran ve sesiyle görünür. İki taraftan da durdurulabilir.
 
+## Dil
+
+İki uygulama da Türkçe ve İngilizce biliyor. macOS yayıncısı sistem dilini izler ve başlık sırasındaki
+**Dil · Sistem / English / Türkçe** kutusuyla arayüzün tamamını canlı değiştirir — sayılar dahil
+(Türkçede "23,4 Mbps", "%12"; İngilizcede "23.4 Mbps", "12%"). Android TV alıcısı TV'nin sistem dilini
+izler: TV Türkçeyse ekranlar Türkçe, İngilizceyse İngilizce olur. Ekranda görünmeyen tanılama çıktısı —
+yayıncının ham günlük dosyası ve alıcının `logcat` satırları — bilinçli olarak tek dilde (Türkçe) kalır;
+o satırları kumandayı tutan kişi değil, hata raporunu okuyan kişi görür.
+
 ## Gereksinimler
 
 | | En düşük |

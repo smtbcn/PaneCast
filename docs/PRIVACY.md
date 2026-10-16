@@ -1,5 +1,7 @@
 # Privacy policy
 
+> English original. Türkçe: [PRIVACY.tr.md](PRIVACY.tr.md)
+
 **Applies to:** PaneCast Receiver (Android TV) and PaneCast Sender (macOS).
 **Last updated:** 2026-10-11
 
@@ -25,8 +27,9 @@ two devices exchange control messages over TCP. Everything on that link is confi
   derive the session key for that pairing. The code itself is not stored on either device afterwards,
   and the pairing can be removed at any time from the TV (hold BACK) or from the sender.
 - **Device names and addresses** (mDNS service discovery, LAN IP/port, TV model name) are used to find
-  and reconnect to your own devices. A pairing record is kept on the sender in a local file so you do
-  not have to re-enter the code every time. Removing the pairing deletes it.
+  and reconnect to your own devices. The pairing record is kept on the sender in macOS's encrypted
+  Keychain, and on the TV inside the app's own private storage — never in a cloud account — so you do
+  not have to re-enter the code every time. Removing the pairing deletes the record on both ends.
 
 Nothing leaves your network: no image, no audio, no identifier, no diagnostic.
 
