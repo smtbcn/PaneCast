@@ -73,4 +73,28 @@ final class NetLoadTests: XCTestCase {
         XCTAssertNil(UpnpIgd.serviceBlock("<root><deviceType>MediaRenderer</deviceType></root>",
                                           "WANCommonInterfaceConfig"))
     }
+
+    /// Modem yoklaması arayüz ritmiyle (1 sn) koşmaz: her tur iki HTTP isteği demek.
+    func testModemRoundsAreSpaced() {
+        let t = Date(timeIntervalSince1970: 10_000)
+        XCTAssertTrue(ModemPollPolicy.canPoll(now: t, lastRoundAt: nil, retryAt: .distantPast),
+                      "ilk tur bekler")
+        XCTAssertFalse(ModemPollPolicy.canPoll(now: t.addingTimeInterval(1), lastRoundAt: t,
+                                               retryAt: .distantPast), "1 sn sonra ikinci tur yok")
+        XCTAssertTrue(ModemPollPolicy.canPoll(now: t.addingTimeInterval(ModemPollPolicy.interval),
+                                              lastRoundAt: t, retryAt: .distantPast))
+    }
+
+    /// Modem UPnP yanıtlamıyorsa SSDP yayını her saniye tekrarlanmaz: ardışık başarısızlık
+    /// 5 sn'den başlayıp katlanarak 60 sn'de tavan yapar.
+    func testFailedDiscoveryBacksOff() {
+        XCTAssertEqual(ModemPollPolicy.retryDelay(afterFailures: 0), 0, accuracy: 0.001)
+        XCTAssertEqual(ModemPollPolicy.retryDelay(afterFailures: 1), 5, accuracy: 0.001)
+        XCTAssertEqual(ModemPollPolicy.retryDelay(afterFailures: 2), 10, accuracy: 0.001)
+        XCTAssertEqual(ModemPollPolicy.retryDelay(afterFailures: 4), 40, accuracy: 0.001)
+        XCTAssertEqual(ModemPollPolicy.retryDelay(afterFailures: 40), 60, accuracy: 0.001, "tavan 60 sn")
+        let t = Date(timeIntervalSince1970: 0)
+        XCTAssertFalse(ModemPollPolicy.canPoll(now: t, lastRoundAt: nil, retryAt: t.addingTimeInterval(5)),
+                       "geri çekilme bitmeden yeni deneme yok")
+    }
 }

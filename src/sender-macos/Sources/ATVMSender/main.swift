@@ -121,7 +121,7 @@ case "dns-probe":
 case "netload":
     // Ağ yükü üç paydasının canlı yoklaması: Wi-Fi hava süresi, bu Mac'in kartı, modem/WAN.
     // Adresler yazdırılmaz (gizlilik): yalnız arabirim adı ve modem erişim durumu.
-    let seconds = Int(num("--seconds", 6)) ?? 6
+    let seconds: Int = num("--seconds", 6)
     let peer = flag("--tv")
     let resolved = InterfaceSampler.routeInterface(to: peer ?? InterfaceSampler.defaultRouteProbe)
     let iface = resolved ?? "en0"
@@ -149,7 +149,7 @@ case "netload":
         }
         try? await Task.sleep(nanoseconds: 1_000_000_000)
     }
-    print("modem durumu: \(modem.state)  okuma turu: \(modem.rounds)")
+    print("modem durumu: \(modem.state)  okuma turu: \(modem.rounds)  ssdp araması: \(modem.discoveryAttempts)")
     exit(0)
 
 case "list-pairs":

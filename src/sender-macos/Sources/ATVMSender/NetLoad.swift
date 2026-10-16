@@ -135,6 +135,28 @@ final class InterfaceSampler {
     }
 }
 
+/// Modem yoklamasının **zamanlama** kararları — saf, tarihten bağımsız, test edilir.
+///
+/// Neden gerekiyor: arayüz 1 sn'de bir tazeleniyor ve her modem turu iki SOAP HTTP isteği
+/// demek; modem UPnP'yi yanıtlamıyorsa her tur ayrıca bir SSDP yayını (239.255.255.250:1900)
+/// denemesi demekti. Sürekli saniyelik yayın, hiç modem olmayan bir ağda komşulara
+/// gürültü, yanıt vermeyen modeme de sürekli ısrar demekti (ölçülen istek sayısı `netload`da).
+enum ModemPollPolicy {
+    /// Başarılı turlar arasındaki en az süre (saniye).
+    static let interval: TimeInterval = 2
+    /// Ardışık başarısız yoklamanın cezası: 5 sn'den başlayıp katlanır, 60 sn'de tavan.
+    static func retryDelay(afterFailures: Int) -> TimeInterval {
+        guard afterFailures > 0 else { return 0 }
+        return min(60, 5 * pow(2.0, Double(afterFailures - 1)))
+    }
+    /// Şu anda bir tur koşabilir mi? (aralık + başarısızlık geri çekilmesi)
+    static func canPoll(now: Date, lastRoundAt: Date?, retryAt: Date) -> Bool {
+        if now < retryAt { return false }
+        guard let at = lastRoundAt else { return true }
+        return now.timeIntervalSince(at) >= interval
+    }
+}
+
 /// Kablosuz bağlantının eşleşmiş fiziksel hızı: yayın bu havayolunu kullanıyor, dolayısıyla
 /// "yayın hattı ne kadar dolduruyor" sorusunun doğru paydası budur. Kabloda nil döner.
 enum WifiLink {
@@ -167,6 +189,9 @@ final class ModemLoad {
     private(set) var wanUpMbps: Double?
     /// Kaç başarılı okuma turu yapıldı (ilk turda fark yoktur → "ölçülüyor" gösterilir).
     private(set) var rounds = 0
+    /// Kaç SSDP keşif denemesi yapıldı — gürültünün ölçülebilir kanıtı (1 sn'lik arayüz
+    /// yoklamasıyla aynı ritimde olmamak zorunda).
+    private(set) var discoveryAttempts = 0
 
     private var controlURL: String?
     private var serviceType: String?
@@ -174,6 +199,9 @@ final class ModemLoad {
     private var lastRecv: UInt64?
     private var lastAt: Date?
     private var inFlight = false
+    private var lastRoundAt: Date?
+    private var retryAt = Date.distantPast
+    private var missStreak = 0
 
     var onChange: (() -> Void)?
 
@@ -187,16 +215,27 @@ final class ModemLoad {
         lastSent = nil; lastRecv = nil; lastAt = nil
         wanUpMbps = nil; wanDownMbps = nil
         capacityDownMbps = nil; capacityUpMbps = nil
+        lastRoundAt = nil; retryAt = .distantPast; missStreak = 0
         onChange?()
     }
 
-    /// Bir tur: önce keşif, sonra sayaç + kapasite okuma. Eşzaman iki tur koşmaz.
+    /// Başarısızlık sonrası ne kadar beklenir (tek yerden hesaplanır).
+    private func backedOff() {
+        missStreak += 1
+        retryAt = Date().addingTimeInterval(ModemPollPolicy.retryDelay(afterFailures: missStreak))
+    }
+
+    /// Bir tur: önce keşif, sonra sayaç + kapasite okuma. Eşzaman iki tur koşmaz;
+    /// turlar `ModemPollPolicy` ritminden hızlı koşamaz.
     func poll() async {
         guard isEnabled, !inFlight else { return }
+        guard ModemPollPolicy.canPoll(now: Date(), lastRoundAt: lastRoundAt, retryAt: retryAt) else { return }
         inFlight = true
         defer { inFlight = false }
         if controlURL == nil {
+            discoveryAttempts += 1
             guard let endpoint = await UpnpIgd.findGatewayConfig() else {
+                backedOff()
                 if state != .unreachable { state = .unreachable; onChange?() }
                 return
             }
@@ -212,6 +251,7 @@ final class ModemLoad {
               let recvText = await UpnpIgd.read(action: "GetTotalBytesReceived", control: control, service: service,
                                                 fields: ["NewTotalBytesReceived"])?["NewTotalBytesReceived"],
               let sent = UInt64(sentText), let recv = UInt64(recvText) else {
+            backedOff()
             if state == .ready { state = .unreachable; controlURL = nil; onChange?() }
             return
         }
@@ -224,6 +264,9 @@ final class ModemLoad {
             capacityUpMbps = link["NewLayer1UpstreamMaxBitRate"].flatMap { Double($0) }.map { $0 / 1_000_000 }
         }
         rounds += 1
+        missStreak = 0
+        retryAt = .distantPast
+        lastRoundAt = Date()
         let previousSent = lastSent, previousRecv = lastRecv, previousAt = lastAt
         lastSent = sent; lastRecv = recv; lastAt = Date()
         if let at = previousAt, let ps = previousSent, let pr = previousRecv {

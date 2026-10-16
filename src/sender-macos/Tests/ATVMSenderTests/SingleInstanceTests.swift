@@ -47,4 +47,36 @@ final class SingleInstanceTests: XCTestCase {
         let mine = Int(ProcessInfo.processInfo.processIdentifier)
         XCTAssertFalse(InstanceGuard.siblingPids().contains(mine), "kendi pid'miz rakip sayılmaz")
     }
+
+    /// Yaşayan sahibin kilidine dokunulmaz: ikinci örnek dosyayı ne ezer ne siler.
+    /// Ölçülen kusur: `enforce` hem kilidi yaratıp sonra `releaseLock()` çağırıyordu —
+    /// yani boyuna giden süreç, birinci örneğin kilidini siliyordu.
+    func testLiveHolderKeepsItsLockFile() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("panecast-lock-test-\(UUID().uuidString)")
+        let holder = Int(getppid())                 // koşan, yaşayan, bize ait olmayan süreç
+        XCTAssertTrue(InstanceGuard.processAlive(holder), "ölçüm için yaşayan bir pid gerekiyor")
+        try "\(holder)\n".write(to: url, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let mine = Int(ProcessInfo.processInfo.processIdentifier)
+        XCTAssertEqual(InstanceGuard.acquireLock(myPid: mine, at: url), holder)
+        XCTAssertEqual(try? String(contentsOf: url, encoding: .utf8), "\(holder)\n", "sahip değişmedi")
+
+        // Kuralın diğer yarısı: koşan örnek varsa kilit zaten denenmez (enforce sırası).
+        XCTAssertNotNil(InstanceGuard.yieldTo(myPid: mine, others: [holder], lockPid: nil,
+                                              alive: InstanceGuard.processAlive),
+                        "karar kilitsiz de verilebiliyor; kilide hiç dokunulmuyor")
+    }
+
+    /// Ölmüş sahibin kilidi devralınır (çökme artığı uygulama açılmazda kalmasın).
+    func testDeadHolderLockIsTakenOver() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("panecast-lock-test-\(UUID().uuidString)")
+        try "999999\n".write(to: url, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let mine = Int(ProcessInfo.processInfo.processIdentifier)
+        XCTAssertNil(InstanceGuard.acquireLock(myPid: mine, at: url), "bayat kilit devralınır")
+        XCTAssertEqual(try? String(contentsOf: url, encoding: .utf8), "\(mine)\n")
+    }
 }

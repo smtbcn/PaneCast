@@ -41,8 +41,10 @@ enum InstanceGuard {
 
     /// Kilit dosyasını dener: O_EXCL ile atomik yaratma. Zaten varsa içindeki pid okunur.
     /// Dönüş: kilit bizdeyse `nil`, başkasındaysa o pid.
-    static func acquireLock(myPid: Int) -> Int? {
-        let path = lockURL.path
+    /// Yaşayan bir sahibin dosyası **asla silinmez veya ezilmez** — test edilebilir olsun diye
+    /// yol parametrelidir; gerçek kilit `lockURL`dir.
+    static func acquireLock(myPid: Int, at url: URL = lockURL) -> Int? {
+        let path = url.path
         let fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
         if fd >= 0 {
             let text = "\(myPid)\n"
@@ -50,11 +52,11 @@ enum InstanceGuard {
             close(fd)
             return nil
         }
-        let held = (try? String(contentsOf: lockURL, encoding: .utf8))
+        let held = (try? String(contentsOf: url, encoding: .utf8))
             .flatMap { Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
         if isStale(lockPid: held, alive: processAlive) || held == myPid {
             // Bayat kilit: eski sahip öldü, devral.
-            try? "\(myPid)\n".write(to: lockURL, atomically: true, encoding: .utf8)
+            try? "\(myPid)\n".write(to: url, atomically: true, encoding: .utf8)
             return nil
         }
         return held
@@ -79,16 +81,26 @@ enum InstanceGuard {
 
     /// Serving komutlarının ortak girişi: ikinci örnekse birinciyi öne çıkarır ve çıkar.
     /// Dönüş: `nil` = devam edebiliriz.
+    ///
+    /// Sıra önemlidir: önce koşan örnek yoklanır, kilit **yalnız o yoksa** denenir.
+    /// Aksi hâlde ikinci örnek kendi yarattığı kilidi silerken, birinci örneğin
+    /// kilidini de silebiliyordu (ölçülen kusur: kilit dosyası, sahibi hâlâ koşarken
+    /// kayboluyordu). Boyun verdiğimiz taraftaki kilide hiç dokunmayız.
     static func enforce(command: String, log: (String) -> Void) -> Never? {
         guard isServing(command) else { return nil }
         let mine = Int(ProcessInfo.processInfo.processIdentifier)
-        let holder = yieldTo(myPid: mine, others: siblingPids(), lockPid: acquireLock(myPid: mine),
-                             alive: processAlive)
-        guard let other = holder else { return nil }
-        log("Pane Cast zaten çalışıyor (pid \(other)) — bir cihazda tek örnek açıktır; "
-            + "birinci örnek öne çıkarıldı, bu süreç kapandı.")
-        activate(pid: other)
-        releaseLock()
-        exit(0)
+        let message: (Int) -> String = { holder in
+            "Pane Cast zaten çalışıyor (pid \(holder)) — bir cihazda tek örnek açıktır; "
+                + "birinci örnek öne çıkarıldı, bu süreç kapandı."
+        }
+        if let other = yieldTo(myPid: mine, others: siblingPids(), lockPid: nil, alive: processAlive) {
+            log(message(other)); activate(pid: other); exit(0)
+        }
+        // Koşan örnek NSWorkspace'te görünmeyebilir (arayüz dışından çalışan ham CLI süreci):
+        // kilit sahibi yaşıyorsa ona boyun verilir.
+        if let holder = acquireLock(myPid: mine) {
+            log(message(holder)); activate(pid: holder); exit(0)
+        }
+        return nil
     }
 }

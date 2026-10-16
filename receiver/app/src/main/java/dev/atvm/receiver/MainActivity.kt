@@ -420,7 +420,7 @@ class MainActivity : Activity(), ControlLink.Listener {
             stats = "● YAYINDA  1920x1080@60  ·  fps 59,8  ·  giriş→render 112 ms",
             detail = "çözücü: c2.vc.h264.decoder  ·  kareler: render=12.480 düşen=0\nağ: 412.907 paket  kayıp 0  yedek 3\n",
             showDetail = showDebug,      // MENU/INFO gerçekten katmanı açsın ki tasarım sınanabilsin
-            version = "önizleme", addresses = "192.0.2.20",
+            version = "ön izleme", addresses = "192.0.2.20",
         )
     }
 

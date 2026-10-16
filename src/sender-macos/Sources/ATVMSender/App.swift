@@ -154,7 +154,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         windowTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.refreshWindows(keepSelection: true) }
         }
-        // Ağ yükü şeridi 1 sn'de bir: sayaç farkı Mbps'e, modem yoklaması da aynı ritme bağlanır.
+        // Ağ yükü şeridi 1 sn'de bir tazelenir (benzeri yoklamalar ucuz: işletim sayacı +
+        // CoreWLAN). Modem yoklaması kendi ritminde koşar: `ModemPollPolicy` (tur arası en az
+        // 2 sn, başarısızlıkta 5→60 sn geri çekilme) — yoksa her saniye iki HTTP isteği ve
+        // modem yanıtlamadığında her saniye SSDP yayını demekti.
         netTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.tickNetLoad() }
         }
