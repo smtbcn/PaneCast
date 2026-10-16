@@ -74,12 +74,26 @@ class ControlLink(storageDir: File, private val listener: Listener) {
      * Mac'e tek satır gitmiyordu — Mac sonsuza dek "Yayında" kalıp pencereyi ağa yazmayı
      * sürdürüyordu. Yalnız Mac'ten gelen `stop`/`unpair` için bildirim zaten yanıt olarak
      * gidiyordu; kendiliğinden duruşlarda hiçbir şey yoktu.
+     *
+     * Soket yazımı kendi iş parçacığında yapılır: duruş kararı ana iş parçacığında
+     * (`stopStream`) koşuyor ve Android ana iş parçacığında ağ erişimine izin vermez —
+     * ilk denemede tam da böyle sessizce düştü ("kontrol yazımı başarısız: null").
      */
-    fun notifyStopped(reason: String) = send(Protocol.json(Msg.T to Msg.STOPPED, "reason" to reason))
+    fun notifyStopped(reason: String) {
+        val json = Protocol.json(Msg.T to Msg.STOPPED, "reason" to reason)
+        Thread({ if (!send(json)) Log.w(TAG, "durdurma bildirisi gitmedi: uç yok ($reason)") },
+               "atvm-stopped").start()
+    }
 
     fun send(json: String): Boolean {
         // IDR isteği yalnız doğrulanmış uca gider; doğrulanmamış bir 7601 bağlantısı araya giremez.
-        val w = (if (authed) writer else null) ?: outboundWriter ?: return false
+        val w = (if (authed) writer else null) ?: outboundWriter
+        if (w == null) {
+            // Ölçülen tanı boşluğu: uç yoktu ve `false` sessizce dönüyordu; "neden bildirmedi"
+            // sorusu logda iz bırakmıyordu.
+            Log.w(TAG, "kontrol mesajı yazılamadı, açık doğrulanmış uç yok: ${json.take(48)}")
+            return false
+        }
         return sendOn(w, json)
     }
 
@@ -88,7 +102,8 @@ class ControlLink(storageDir: File, private val listener: Listener) {
             synchronized(w) { w.write(json); w.write("\n"); w.flush() }
             true
         } catch (e: Exception) {
-            Log.w(TAG, "kontrol yazımı başarısız: ${e.message}")
+            // `e.message` null olabiliyor (NetworkOnMainThreadException): sınıf adını da yaz.
+            Log.w(TAG, "kontrol yazımı başarısız: ${e.message ?: e.javaClass.simpleName}")
             false
         }
     }
