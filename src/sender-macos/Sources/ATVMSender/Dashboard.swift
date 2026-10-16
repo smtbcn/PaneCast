@@ -292,6 +292,8 @@ final class DashboardView: NSView {
     private(set) lazy var tileLatency = MetricTile(title: "Kodlama gecikmesi", hint: "p50 / p95")
     private(set) lazy var tilePackets = MetricTile(title: "Paketler", hint: "video / ses")
     private(set) lazy var tileHealth = MetricTile(title: "Ağ sağlığı", hint: "kayıp · yedekleme")
+    /// Ağ yükü şeridi: yayının Mbps'i + üç payda yüzdesi (kullanıcı isteği).
+    let netStrip = NetStripView(frame: .zero)
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -310,6 +312,7 @@ final class DashboardView: NSView {
         tilePackets.spark.lineColor = .systemBlue
         tileHealth.spark.lineColor = .systemGreen
         tiles.forEach { addSubview($0) }
+        addSubview(netStrip)
 
         summaryBar.wantsLayer = true
         summaryBar.layer?.cornerRadius = 9
@@ -451,6 +454,10 @@ final class DashboardView: NSView {
             let tileRows = Int(ceil(Double(tiles.count) / Double(columns)))
             contentBottom = top + CGFloat(tileRows) * (tileH + gap)
         }
+        // Ağ yükü şeridi ölçü kutularının altında sabit durur: katışık modda da görünür,
+        // çünkü asıl soru ("ne kadar yük bindiriyorum") yer darken de soruluyor.
+        let stripTop = max(contentBottom + 8, bounds.height - 30 - NetStripView.height - 8)
+        netStrip.frame = NSRect(x: 0, y: stripTop, width: width, height: NetStripView.height)
         // Özet satırı ile "Olaylar" düğmesi alta yapışık tek sırada: pano büyüdükçe boşluk
         // birikmesin, ama kutularla da çakışmasın.
         let rowY = max(contentBottom + 8, bounds.height - 30)
@@ -495,6 +502,8 @@ final class DashboardView: NSView {
     static let shortTileHeight: CGFloat = 78
     static let chipRowHeight: CGFloat = 38
     static let summaryRowHeight: CGFloat = 38
+    /// Ağ yükü şeridi + üstü boşluk (her modda görünür).
+    static let stripRowHeight: CGFloat = NetStripView.height + 8
     static let gap: CGFloat = 8
 
     /// Ölçü kutularının kaç satıra dizileceği.
@@ -502,13 +511,13 @@ final class DashboardView: NSView {
         Int(ceil(5 / Double(columns(for: width))))
     }
 
-    /// Panonun **ihtiyaç duyduğu** yükseklik: çip sırası + kutu satırları + özet/düğme sırası.
-    /// `layoutBoard` liste boyunu buradan kalan yerden hesaplar; `tileH` alçalınca grafik çizgisi düşer,
-    /// `tiles = 0` (katışık) yalnız çip + özet kalır.
+    /// Panonun **ihtiyaç duyduğu** yükseklik: çip sırası + kutu satırları + ağ şeridi
+    /// + özet/düğme sırası. `layoutBoard` liste boyunu buradan kalan yerden hesaplar;
+    /// `tileH` alçalınca grafik çizgisi düşer, `tiles = 0` (katışık) çip + şerit + özet kalır.
     static func requiredHeight(width: CGFloat, tileH: CGFloat, tiles: Int) -> CGFloat {
-        guard tiles > 0 else { return chipRowHeight + summaryRowHeight }
-        let rows = Int(ceil(Double(tiles) / Double(max(1, columns(for: width)))))
-        return chipRowHeight + CGFloat(rows) * (tileH + gap) + summaryRowHeight
+        let rows = tileRows(forWidth: width)
+        let tileBlock = tiles > 0 ? CGFloat(rows) * (tileH + gap) : 0
+        return chipRowHeight + tileBlock + stripRowHeight + summaryRowHeight
     }
 
     /// Bu görünüme biçilmiş genişlikte gereken yükseklik (katışık/alkaçlı mod hesaba katılır).

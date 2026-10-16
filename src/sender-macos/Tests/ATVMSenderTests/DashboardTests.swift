@@ -64,18 +64,19 @@ final class DashboardTests: XCTestCase {
     }
 
     /// Gerekli yükseklik, sığan yükseklikten az olmamalı: ölçüldü, tam hesaplanan
-    /// yükseklikte "Olaylar" satırı kesiliyordu.
+    /// yükseklikte "Olaylar" satırı kesiliyordu. Ağ şeridi her modda sayılır.
     func testNeededHeightCoversTilesAndSummaryRow() {
+        let strip = DashboardView.stripRowHeight
         // 700 px → 3 sütun → 5 kutu 2 satıra dizilir.
         let full = DashboardView.requiredHeight(width: 700, tileH: DashboardView.tileHeight, tiles: 5)
-        XCTAssertEqual(full, DashboardView.chipRowHeight + 2 * (104 + 8) + DashboardView.summaryRowHeight,
+        XCTAssertEqual(full, DashboardView.chipRowHeight + 2 * (104 + 8) + strip + DashboardView.summaryRowHeight,
                        accuracy: 0.01)
         // Alçak kutu (grafik çizgisi düşmüş) daha az yer ister.
         let short = DashboardView.requiredHeight(width: 700, tileH: DashboardView.shortTileHeight, tiles: 5)
         XCTAssertLessThan(short, full)
-        // Katışık: yalnız çip sırası + özet sırası.
+        // Katışık: çip + şerit + özet (ölçü kutuları kalkar, ağ yükü görünür kalır).
         XCTAssertEqual(DashboardView.requiredHeight(width: 700, tileH: 0, tiles: 0),
-                       DashboardView.chipRowHeight + DashboardView.summaryRowHeight, accuracy: 0.01)
+                       DashboardView.chipRowHeight + strip + DashboardView.summaryRowHeight, accuracy: 0.01)
         // Genişte tek satıra sığar → pano alçalır, listeler uzar (orantı isteği).
         XCTAssertEqual(DashboardView.tileRows(forWidth: 1300), 1)
         XCTAssertLessThan(DashboardView.requiredHeight(width: 1300, tileH: 104, tiles: 5),

@@ -89,6 +89,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private var summaryIsError = false
     /// Olay ekranındaki "elzem" satırı için son ölçüm (yayın durunca sıfırlanmaz, etiket düşer).
     private var lastStats: MirrorEngine.Stats?
+    /// Ağ yükü şeridinin üç paydası: RTP çıkışı, Mac kartı, modem/WAN.
+    private let interfaceSampler = InterfaceSampler()
+    private let modem = ModemLoad()
+    private var netTimer: Timer?
+    private var castMbps: Double?
+    private var lastWireBytes: Int?
+    private var lastWireAt: Date?
+    private var wifiMbps: Double?
+    /// Yayının gittiği arabirim; hedef adres değişince yeniden çözülmeli.
+    private var routeInterface: String?
+    private var routeHost: String?
+    private var netTick = 0
+    /// Son Mac kartı örneği: modem/others geri çağırması şeridi yeniden çizerken kaybolmasın.
+    private var lastMacSample: (inbound: Double?, outbound: Double?)?
 
     private static let winColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("win"))
     private static let devColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("dev"))
@@ -139,6 +153,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         }
         windowTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.refreshWindows(keepSelection: true) }
+        }
+        // Ağ yükü şeridi 1 sn'de bir: sayaç farkı Mbps'e, modem yoklaması da aynı ritme bağlanır.
+        netTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.tickNetLoad() }
         }
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -309,6 +327,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         board.addSubview(dashboard)
         dashboard.clearStats()
         dashboard.onOpenEvents = { [weak self] in self?.setEventsShown(true) }
+        // Modem yoklaması: kullanıcı isteğiyle varsayılan açık, tercih hatırlanıyor.
+        let probeOn = UserDefaults.standard.object(forKey: Self.modemProbeKey) as? Bool ?? true
+        modem.setEnabled(probeOn)
+        dashboard.netStrip.modemToggle.state = probeOn ? .on : .off
+        dashboard.netStrip.onToggleModem = { [weak self] on in
+            guard let self else { return }
+            UserDefaults.standard.set(on, forKey: Self.modemProbeKey)
+            self.modem.setEnabled(on)
+            self.note(on ? "Modem yoklaması açıldı (UPnP IGD)" : "Modem yoklaması kapatıldı",
+                      on ? .info : .warn)
+        }
+        modem.onChange = { [weak self] in self?.renderNetStrip() }
 
         eventsPage.isHidden = true
         eventsPage.onBack = { [weak self] in self?.setEventsShown(false) }
@@ -1092,6 +1122,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                                  + " kayıp \(trouble) · \(String(format: "%.1f", s.fps)) fps",
                                  trouble == 0 ? .ok : .warn)
         }
+    }
+
+    // ---------- ağ yükü ----------
+
+    private static let modemProbeKey = "modemProbe"
+
+    /// 1 sn'lik yoklama turu: RTP çıkışı, Mac kartı, Wi-Fi hızı ve (açıksa) modem sayacı.
+    private func tickNetLoad() async {
+        netTick += 1
+        // Yayının RTP hızı: motor sayacı farkından. Yayın yoksa değer nil kalır ("—" gösterilir).
+        if engine.isRunning, let stats = lastStats {
+            let now = Date()
+            if let previous = lastWireBytes, let at = lastWireAt {
+                let dt = now.timeIntervalSince(at)
+                castMbps = NetMath.mbps(previous: UInt64(previous), current: UInt64(stats.wireBytes),
+                                        seconds: dt)
+            }
+            lastWireBytes = stats.wireBytes
+            lastWireAt = now
+        } else {
+            castMbps = nil; lastWireBytes = nil; lastWireAt = nil
+        }
+        // Arabirim adı tahmin edilmez: yayın yapılan adrese giden yol sorulur. Hedef
+        // seçili değilken varsayılan yol aynı yöntemle çözülür (paket gitmez).
+        // Ölçülen kusur: koşul `host != routeHost` idi → hedef yokken `nil != nil` false
+        // kalıyor ve şerit hiç dolmuyordu.
+        let host = engine.streamingHost ?? selectedHost()
+        // Hedef değiştiyse yeniden çöz; henüz hiç çözülmediyse 5 turda bir tekrar dene.
+        if host != routeHost || (routeInterface == nil && netTick % 5 == 0) {
+            routeHost = host
+            routeInterface = InterfaceSampler.routeInterface(to: host ?? InterfaceSampler.defaultRouteProbe)
+        }
+        lastMacSample = interfaceSampler.sample(interface: routeInterface)
+        // Değer yoksa her turda, varsa 10 turda bir sor: ilk yoklama boş dönebiliyor.
+        if wifiMbps == nil || netTick % 10 == 0 { wifiMbps = WifiLink.rateMbps() }
+        renderNetStrip()
+        if modem.isEnabled { await modem.poll() }
+    }
+
+    /// Şeridin tek çizim yeri: her kaynak kendi alanında durur, modem geri çağırması
+    /// Mac hücresini nil ile ezmesin (ölçülen kusur: "bu Mac'in kartı" sürekli "—" kalıyordu).
+    private func renderNetStrip() {
+        var r = NetStripView.Reading()
+        r.castMbps = castMbps
+        r.wifiMbps = wifiMbps
+        r.macIn = lastMacSample?.inbound
+        r.macOut = lastMacSample?.outbound
+        r.interface = interfaceSampler.interfaceName ?? routeInterface
+        r.wanIn = modem.wanDownMbps
+        r.wanOut = modem.wanUpMbps
+        r.capDown = modem.capacityDownMbps
+        r.capUp = modem.capacityUpMbps
+        r.accessType = modem.accessType
+        r.modemState = modem.state
+        dashboard.netStrip.set(r)
     }
 
     /// Rozet rengi **yayın durumundan** gelir, metinden değil: metin geçici uyarıları da

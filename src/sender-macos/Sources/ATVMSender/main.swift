@@ -56,6 +56,7 @@ func usage() -> Never {
       atvm-sender list-tvs
       atvm-sender list-pairs                     # eşleşme defteri (anahtar değerleri yazdırılmaz)
       atvm-sender dns-probe [--seconds 4]        # mDNS zinciri: browse → resolve → IPv4
+      atvm-sender netload [--seconds 6] [--tv <ip>]   # ağ yükü paydaları: Wi-Fi hızı · Mac kartı · modem/WAN
       atvm-sender list-windows [--app SÜZGEÇ]
       atvm-sender selftest [--profile 1080p60] [--frames 300]
       atvm-sender audio-tap-test --pid <süreç> [--seconds 3] [--wav yol]   # uygulama sesi tap'i, TV'siz
@@ -111,6 +112,40 @@ case "dns-probe":
                                      seconds: Double(num("--seconds", 4)), notes: { print($0) })
     print("çözülen servis: \(found.count)")
     for e in found { print("  \(e.instance) → \(e.host):\(e.port)") }
+    exit(0)
+
+case "netload":
+    // Ağ yükü üç paydasının canlı yoklaması: Wi-Fi hava süresi, bu Mac'in kartı, modem/WAN.
+    // Adresler yazdırılmaz (gizlilik): yalnız arabirim adı ve modem erişim durumu.
+    let seconds = Int(num("--seconds", 6)) ?? 6
+    let peer = flag("--tv")
+    let resolved = InterfaceSampler.routeInterface(to: peer ?? InterfaceSampler.defaultRouteProbe)
+    let iface = resolved ?? "en0"
+    print("yol çözümü: \(resolved.map { $0 } ?? "nil (en0 varsayıldı)")")
+    print("arabirim: \(iface)  Wi-Fi eşleşen hız: \(WifiLink.rateMbps().map { String(format: "%.0f Mbps", $0) } ?? "okunamadı (kablolu olabilir)")")
+    let sampler = InterfaceSampler()
+    let modem = ModemLoad()
+    modem.setEnabled(true)
+    var first = true
+    for _ in 0 ..< max(2, seconds) {
+        let mac = sampler.sample(interface: iface)
+        await modem.poll()
+        if first { print("  ilk tur: sayaç farkı alınmadı"); first = false }
+        else {
+            let line = String(format: "  Mac ↓%@ ↑%@ Mbps",
+                              mac.inbound.map { String(format: "%.2f", $0) } ?? "-",
+                              mac.outbound.map { String(format: "%.2f", $0) } ?? "-")
+            let wan = String(format: "  modem ↓%@ ↑%@ Mbps (kapasite ↓%@ ↑%@ %@)",
+                             modem.wanDownMbps.map { String(format: "%.2f", $0) } ?? "-",
+                             modem.wanUpMbps.map { String(format: "%.2f", $0) } ?? "-",
+                             modem.capacityDownMbps.map { String(format: "%.0f", $0) } ?? "?",
+                             modem.capacityUpMbps.map { String(format: "%.0f", $0) } ?? "?",
+                             modem.accessType)
+            print(line + wan)
+        }
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+    }
+    print("modem durumu: \(modem.state)  okuma turu: \(modem.rounds)")
     exit(0)
 
 case "list-pairs":

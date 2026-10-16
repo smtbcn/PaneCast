@@ -231,6 +231,9 @@ final class MediaUdpSender: @unchecked Sendable {
         var injDrop = 0         // sınama için bilerek düşürülen
         var paceDrop = 0        // pacer kuyruğu taşınca atılan
         var sendErrors = 0
+        /// Ağ yığınına verilen RTP paketi baytı (video + ses + yeniden gönderim, RTP başlığı dâhil).
+        /// Kodlayıcının "kaç bayt ürettim" sayısından farkı: gerçekten gönderilen her şeyi sayar.
+        var wireBytes = 0
     }
 
     /// Ağ yığınına verilmiş ama henüz işlenmemiş bayt tavanı: kuyruğu sığ tutar (ses de beklemesin).
@@ -298,7 +301,7 @@ final class MediaUdpSender: @unchecked Sendable {
 
     private func rawSend(_ packet: Data) {
         let n = packet.count
-        lock.lock(); inflightBytes += n; lock.unlock()
+        lock.lock(); inflightBytes += n; c.wireBytes += n; lock.unlock()
         connection.send(content: packet, completion: .contentProcessed { [weak self] err in
             guard let self else { return }
             self.lock.lock()
