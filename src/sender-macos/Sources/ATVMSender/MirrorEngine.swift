@@ -474,14 +474,14 @@ final class MirrorEngine {
         case .hidden:
             log(String(format: "kaynak %.0f sn kare üretmiyor ve pencere artık bestelenmiyor",
                        StallGuard.quietLimit))
-            onStatusNote?("Pencere artık görünür değil (ayrı Space'te tam ekran olabilir) — TV ekranı modu bu durumda donmaz")
+            onStatusNote?(L10n.t(.statusWindowNotVisible))
         case .retry:
             log("pencere geri geldi ama kare hâlâ yok → yakalama yeniden kuruluyor")
-            onStatusNote?("Kaynak kare üretmiyor — yeniden deneniyor")
+            onStatusNote?(L10n.t(.statusSourceIdle))
             Task { @MainActor [weak self] in await self?.restartCapture() }
         case .gone:
             log("pencere kapatıldı → yayın sonlandırılıyor")
-            onStatusNote?("Pencere kapatıldı — yayın durduruldu")
+            onStatusNote?(L10n.t(.statusWindowClosed))
             Task { @MainActor [weak self] in await self?.stop() }
         }
     }

@@ -92,6 +92,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleName</key>                    <string>Pane Cast</string>
     <key>CFBundleDisplayName</key>             <string>Pane Cast</string>
     <key>CFBundlePackageType</key>             <string>APPL</string>
+    <!-- İki dil destekleniyor: macOS'un uygulama-dili seçeneği ve Locale.current
+         bu beyana bakar. Metinler demet içindeki .lproj'da değil Swift kataloğunda
+         duruyor (bkz. Sources/ATVMSender/L10n.swift), ama beyan yine de gerekli. -->
+    <key>CFBundleDevelopmentRegion</key>        <string>en</string>
+    <key>CFBundleLocalizations</key>
+    <array><string>en</string><string>tr</string></array>
     <key>CFBundleShortVersionString</key>      <string>$VERSION</string>
     <key>CFBundleVersion</key>                 <string>$BUILD_NUMBER</string>
     <!-- 14.0 is enough for window video; per-app audio isolation (Core Audio process tap) needs 14.2. -->

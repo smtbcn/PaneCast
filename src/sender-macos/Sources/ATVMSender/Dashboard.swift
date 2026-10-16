@@ -17,11 +17,30 @@ enum EventSeverity: Int, Comparable {
 /// Bir olay grubu: aynı metin tekrarlanırsa `count` artar, yeni satır açılmaz.
 /// Ölçülen kusur: "keşif: 1 TV bulundu" satırı 20 saniyede bir ekleniyor ve arayüz
 /// okunamayacak kadar metin duvarına dönüyordu.
+///
+/// Satır çevrilebilir olsun diye **anahtar + biçim ögeleri** de taşınıyor (`key`/`args`).
+/// Anahtarsız satırlar (işletimden gelen hata yazısı, TV'den gelen gerekçe) tek dildedir ve
+/// dil değişince olduğu gibi kalır — uydurma çevirme yapılmaz.
 struct EventRow {
     var severity: EventSeverity
     var text: String
+    var key: TextKey?
+    var args: [any CVarArg]
     var count: Int
     var last: Date
+
+    /// Görünen yazı: anahtar varsa **şu anki** dilde çözülür.
+    var rendered: String {
+        guard let key else { return text }
+        return L10n.f(key, args)
+    }
+
+    /// Gruplama izi: aynı anahtar **ve aynı ögeler** = aynı satır. Ögeler dile göre
+    /// çözülmez; yoksa "keşif: 1 TV" ile "keşif: 2 TV" tek satırda birleşirdi.
+    var identity: String {
+        guard let key else { return text }
+        return ([key.rawValue] + args.map { String(describing: $0) }).joined(separator: "\u{1}")
+    }
 }
 
 /// Arayüzün olay defteri (ham günlük dosyaya aynen yazılmaya devam eder).
@@ -31,21 +50,38 @@ final class EventBook {
 
     init(limit: Int = 40) { self.limit = limit }
 
+    /// Çevrilebilir satır: anahtar + ögeler saklanır, görünen yazı dilden çözülür.
+    func add(_ key: TextKey, _ args: [any CVarArg] = [], _ severity: EventSeverity = .info) {
+        let row = EventRow(severity: severity, text: L10n.f(key, args), key: key, args: args,
+                           count: 1, last: Date())
+        merge(row)
+    }
+
+    /// Serbest yazı (işletim/TV metni): çevrilmez, olduğu gibi gösterilir.
     func add(_ text: String, _ severity: EventSeverity = .info) {
-        if let i = rows.firstIndex(where: { $0.text == text }) {
+        merge(EventRow(severity: severity, text: text, key: nil, args: [], count: 1, last: Date()))
+    }
+
+    private func merge(_ row: EventRow) {
+        if let i = rows.firstIndex(where: { $0.identity == row.identity }) {
             rows[i].count += 1
             rows[i].last = Date()
-            rows[i].severity = max(rows[i].severity, severity)
+            rows[i].severity = max(rows[i].severity, row.severity)
             let moved = rows.remove(at: i)
             rows.insert(moved, at: 0)          // en son olan en üstte
         } else {
-            rows.insert(EventRow(severity: severity, text: text, count: 1, last: Date()), at: 0)
+            rows.insert(row, at: 0)
             if rows.count > limit { rows.removeLast() }
         }
     }
 
     var groupCount: Int { rows.count }
     var lineCount: Int { rows.reduce(0) { $0 + $1.count } }
+
+    /// Dil değişince yazıları yeniden çözer (anahtarsız satırlar olduğu gibi kalır).
+    func rerender() {
+        for i in rows.indices { rows[i].text = rows[i].rendered }
+    }
 
     /// "Temizle": arayüz defterini boşaltır (ham günlük dosyasına dokunmaz).
     func clear() { rows.removeAll() }
@@ -57,7 +93,8 @@ final class SparkView: NSView {
     private let capacity = 60
     var lineColor: NSColor = .controlAccentColor { didSet { needsDisplay = true } }
     var showsFill = true
-    var emptyText = "veri bekleniyor"
+    /// Boş grafığın erişilebilir adı — anahtar olarak durur, dil değişince yeniden çözülür.
+    var emptyKey: TextKey = .sparkWaiting
 
     override var isFlipped: Bool { false }
 
@@ -97,8 +134,8 @@ final class SparkView: NSView {
     }
 
     override func accessibilityLabel() -> String? {
-        guard let last = samples.last else { return emptyText }
-        return "\(samples.count) örnek, son değer \(String(format: "%.1f", last))"
+        guard let last = samples.last else { return L10n.t(emptyKey) }
+        return L10n.f(.sparkAccessibility, String(samples.count), String(format: "%.1f", last))
     }
 }
 
@@ -115,13 +152,14 @@ final class ChipView: NSView {
     private let led = NSView()
     private let keyLabel = NSTextField(labelWithString: "")
     private let valueLabel = NSTextField(labelWithString: "")
-    private var keyText = ""
+    private let key: TextKey
+    private var languageWatch: LanguageWatch?
 
     var state: State = .idle { didSet { tint() } }
 
-    init(key: String) {
+    init(key: TextKey) {
+        self.key = key
         super.init(frame: .zero)
-        keyText = key
         wantsLayer = true
         layer?.cornerRadius = 9
         layer?.borderWidth = 1
@@ -129,14 +167,22 @@ final class ChipView: NSView {
         led.layer?.cornerRadius = 4
         keyLabel.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
         keyLabel.textColor = .secondaryLabelColor
-        keyLabel.stringValue = key.uppercased()
         valueLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
         valueLabel.lineBreakMode = .byTruncatingMiddle
         addSubview(led); addSubview(keyLabel); addSubview(valueLabel)
+        applyLanguage()
         tint()
+        languageWatch = LanguageWatch { [weak self] in self?.applyLanguage() }
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// Çip başlığı büyük harf ve yerel: "KEŞİF" doğru, `uppercased()` "KEŞIF" üretirdi.
+    func applyLanguage() {
+        keyLabel.stringValue = L10n.caps(key)
+        invalidateIntrinsicContentSize()
+        needsLayout = true
+    }
 
     func set(_ value: String, state: State? = nil) {
         valueLabel.stringValue = value
@@ -195,7 +241,19 @@ final class MetricTile: NSView {
     let detailLabel = NSTextField(labelWithString: "")
     let spark = SparkView()
 
-    init(title: String, hint: String = "") {
+    private let titleKey: TextKey
+    /// Ölçüm gelmeden önceki yardım satırı; `detailKey` nil iken bu görünür.
+    private let hintKey: TextKey
+    /// Son yardımcı satırın kaynağı: dil değişince ögelerle yeniden çözülür.
+    private var detailKey: TextKey?
+    private var detailArgs: [any CVarArg] = []
+    private var valueKey: TextKey?
+    private var valueArgs: [any CVarArg] = []
+    private var languageWatch: LanguageWatch?
+
+    init(title: TextKey, hint: TextKey) {
+        self.titleKey = title
+        self.hintKey = hint
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = 9
@@ -203,7 +261,6 @@ final class MetricTile: NSView {
         paint()
         titleLabel.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
         titleLabel.textColor = .secondaryLabelColor
-        titleLabel.stringValue = title.uppercased()
         valueLabel.font = NSFont.systemFont(ofSize: 21, weight: .semibold)
         valueLabel.textColor = .labelColor
         valueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 21, weight: .semibold)
@@ -211,11 +268,20 @@ final class MetricTile: NSView {
         unitLabel.textColor = .secondaryLabelColor
         detailLabel.font = NSFont.systemFont(ofSize: 11)
         detailLabel.textColor = .tertiaryLabelColor
-        detailLabel.stringValue = hint
         [titleLabel, valueLabel, unitLabel, detailLabel, spark].forEach(addSubview)
+        applyLanguage()
+        languageWatch = LanguageWatch { [weak self] in self?.applyLanguage() }
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// Başlık + sayı + yardımcı satır dile bağlı; birimler ("fps", "Mbps", "ms") değil.
+    func applyLanguage() {
+        titleLabel.stringValue = L10n.caps(titleKey)
+        if let valueKey { valueLabel.stringValue = L10n.f(valueKey, valueArgs) }
+        detailLabel.stringValue = detailKey.map { L10n.f($0, detailArgs) } ?? L10n.t(hintKey)
+        needsLayout = true
+    }
 
     /// Kart zemini + kenarı; tema değişince yeniden çağrılır.
     private func paint() {
@@ -228,11 +294,30 @@ final class MetricTile: NSView {
         effectiveAppearance.performAsCurrentDrawingAppearance { paint() }
     }
 
-    func set(_ value: String, unit: String = "", detail: String? = nil) {
+    /// Dil değişince yeniden çözülebilmesi için yazı **anahtar + öge** olarak saklanır.
+    /// Sayı gibi dilden bağımsız değerler düz `String` gelir (`valueKey` nil kalır).
+    func set(_ value: String, unit: String = "", detail: TextKey? = nil,
+             args: [any CVarArg] = []) {
+        valueKey = nil
+        valueArgs = []
         valueLabel.stringValue = value
+        apply(unit: unit, detail: detail, args: args)
+    }
+
+    func set(valueKey: TextKey, valueArgs: [any CVarArg] = [], unit: String = "",
+             detail: TextKey? = nil, args: [any CVarArg] = []) {
+        self.valueKey = valueKey
+        self.valueArgs = valueArgs
+        apply(unit: unit, detail: detail, args: args)
+    }
+
+    private func apply(unit: String, detail: TextKey?, args: [any CVarArg]) {
         unitLabel.stringValue = unit
-        if let detail { detailLabel.stringValue = detail }
-        needsLayout = true
+        if let detail {
+            detailKey = detail
+            detailArgs = args
+        }
+        applyLanguage()
     }
 
     /// Renk, eşik aşılınca metnin kendisini de boyar: sayıya bakmadan anlaşılsın.
@@ -282,18 +367,24 @@ final class DashboardView: NSView {
     /// (panonun içindeki katlanır liste gerçek tıklamayla açılmıyordu).
     var onOpenEvents: (() -> Void)?
 
-    let chipSource = ChipView(key: "Kaynak")
-    let chipTarget = ChipView(key: "Hedef")
-    let chipChannel = ChipView(key: "Kanal")
-    let chipDiscovery = ChipView(key: "Keşif")
+    let chipSource = ChipView(key: .chipSource)
+    let chipTarget = ChipView(key: .chipTarget)
+    let chipChannel = ChipView(key: .chipChannel)
+    let chipDiscovery = ChipView(key: .chipDiscovery)
 
-    private(set) lazy var tileFps = MetricTile(title: "Kare hızı", hint: "hedef 60")
-    private(set) lazy var tileBitrate = MetricTile(title: "Bit hızı", hint: "anlık")
-    private(set) lazy var tileLatency = MetricTile(title: "Kodlama gecikmesi", hint: "p50 / p95")
-    private(set) lazy var tilePackets = MetricTile(title: "Paketler", hint: "video / ses")
-    private(set) lazy var tileHealth = MetricTile(title: "Ağ sağlığı", hint: "kayıp · yedekleme")
+    private(set) lazy var tileFps = MetricTile(title: .tileFps, hint: .tileFpsHint)
+    private(set) lazy var tileBitrate = MetricTile(title: .tileBitrate, hint: .tileBitrateHint)
+    private(set) lazy var tileLatency = MetricTile(title: .tileLatency, hint: .tileLatencyHint)
+    private(set) lazy var tilePackets = MetricTile(title: .tilePackets, hint: .tilePacketsHint)
+    private(set) lazy var tileHealth = MetricTile(title: .tileHealth, hint: .tileHealthHint)
     /// Ağ yükü şeridi: yayının Mbps'i + üç payda yüzdesi (kullanıcı isteği).
     let netStrip = NetStripView(frame: .zero)
+
+    private var languageWatch: LanguageWatch?
+    /// Özet satırının kaynağı: anahtarla kurulduysa dil geçişinde yeniden çözülür,
+    /// serbest yazıyla (TV'den gelen gerekçe) kurulduysa olduğu gibi kalır.
+    private var summaryKey: TextKey?
+    private var summaryArgs: [any CVarArg] = []
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -330,50 +421,79 @@ final class DashboardView: NSView {
         eventsButton.font = NSFont.systemFont(ofSize: 11.5, weight: .medium)
         eventsButton.target = self
         eventsButton.action = #selector(openEvents)
-        eventsButton.setAccessibilityLabel("Olaylar")
-        eventsButton.toolTip = "Aynı satırlar tek satırda toplanır; tam liste ayrı açılır."
-        eventsButton.title = "Olaylar"
+        eventsButton.setAccessibilityLabel(L10n.t(.eventsTitle))
+        eventsButton.toolTip = L10n.t(.eventsTooltip)
+        eventsButton.title = L10n.t(.eventsTitle)
         addSubview(eventsButton)
 
-        setSummary("Hazır — soldan pencere, sağdan TV seç.", .idle)
+        setSummary(.summaryReady, .idle)
+        languageWatch = LanguageWatch { [weak self] in self?.applyLanguage() }
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     override var isFlipped: Bool { true }
 
+    /// Panonun sabit yazıları: çip başlıkları, kutu başlıkları/yardımcı satırları, olaylar
+    /// düğmesi ve özet satırı. Ölçüm kaynaklı satırlar kendi ögeleriyle yeniden çözülür,
+    /// yoksa dil geçişinde ekranda Türkçe bir "12 grup" yazısı asılı kalırdı.
+    func applyLanguage() {
+        [chipSource, chipTarget, chipChannel, chipDiscovery].forEach { $0.applyLanguage() }
+        [tileFps, tileBitrate, tileLatency, tilePackets, tileHealth].forEach { $0.applyLanguage() }
+        netStrip.applyLanguage()
+        eventsButton.setAccessibilityLabel(L10n.t(.eventsTitle))
+        eventsButton.toolTip = L10n.t(.eventsTooltip)
+        if let summaryKey {
+            summaryText = L10n.f(summaryKey, summaryArgs)
+            summaryLabel.stringValue = summaryText
+        }
+        reloadEvents(lastRows, groups: lastGroups, lines: lastLines)
+        invalidateIntrinsicContentSize()
+        needsLayout = true
+    }
+
+    /// Son olay sayımları: düğme yazımının kaynağı (yeniden çizimde hatırlansın).
+    private var lastRows: [EventRow] = []
+    private var lastGroups = 0
+    private var lastLines = 0
+
     @objc private func openEvents() { onOpenEvents?() }
 
     func setStats(_ s: MirrorEngine.Stats) {
-        tileFps.set(String(format: "%.1f", s.fps), unit: "fps",
-                    detail: "\(Int(s.seconds)) sn ortalaması")
+        let seconds = String(Int(s.seconds))
+        tileFps.set(L10n.number(s.fps), unit: "fps", detail: .tileFpsDetail, args: [seconds])
         tileFps.push(s.fps)
-        tileBitrate.set(String(format: "%.1f", s.mbps), unit: "Mbps", detail: "kodlayıcı çıkışı")
+        tileBitrate.set(L10n.number(s.mbps), unit: "Mbps", detail: .tileBitrateDetail)
         tileBitrate.push(s.mbps)
-        tileLatency.set(String(format: "%.1f", s.encodeP50), unit: "ms",
-                        detail: "p95 \(String(format: "%.1f", s.encodeP95)) ms · yakalama \(String(format: "%.1f", s.captureP50)) ms")
+        tileLatency.set(L10n.number(s.encodeP50), unit: "ms",
+                        detail: .tileLatencyDetail,
+                        args: [L10n.number(s.encodeP95), L10n.number(s.captureP50)])
         tileLatency.push(s.encodeP50)
         tilePackets.set(Self.grouped(s.packets), unit: "RTP",
-                        detail: "ses \(Self.grouped(s.audioPackets)) paket · \(Int(s.seconds)) sn")
+                        detail: .tilePacketsDetail,
+                        args: [Self.grouped(s.audioPackets), seconds])
         let trouble = s.nackRequests + s.dropped
-        tileHealth.set(trouble == 0 ? "Kayıp yok" : "\(trouble) olay", unit: "",
-                       detail: "NACK \(s.nackRequests) · yedek \(s.retransmitted) · düşen \(s.dropped)")
+        tileHealth.set(valueKey: trouble == 0 ? .tileHealthOk : .tileHealthIssues,
+                       valueArgs: trouble == 0 ? [] : [L10n.int(trouble)],
+                       unit: "", detail: .tileHealthDetail,
+                       args: [L10n.int(s.nackRequests), L10n.int(s.retransmitted),
+                              L10n.int(s.dropped)])
         // Sağlık **yalnız kayıptan** hesaplanır: hareketsiz pencerede SCK kare göndermez,
         // düşük fps tek başına arıza değildir (ölçüldü: duran pencerede 0,6 fps, kayıp 0).
         tileHealth.tint(trouble == 0 ? Theme.okText : Theme.warnText)
         needsLayout = true
     }
 
-    static func grouped(_ n: Int) -> String {
-        NumberFormatter.localizedString(from: NSNumber(value: n), number: .decimal)
-    }
+    /// Binlik ayracı locale'den gelir: Türkçede "12.345", İngilizcede "12,345".
+    /// Binlik ayracı dile göre: Türkçede "12.345", İngilizcede "12,345".
+    static func grouped(_ n: Int) -> String { L10n.int(n) }
 
     /// Yayın durduğunda kutular "veri bekleniyor" haline döner — sıfır değeriyle yalan söylemesin.
     /// Özet satırına dokunmaz: ölçülen kusur, kırmızı hata mesajının bir sonraki 20 sn'lik
     /// yenilemede kendiliğinden kaybolmasıydı (sebep kullanıcıya görünmez kalıyordu).
     func clearStats() {
         [tileFps, tileBitrate, tileLatency, tilePackets, tileHealth].forEach {
-            $0.set("—", unit: "", detail: "yayın yok")
+            $0.set("—", unit: "", detail: .tileNoBroadcast)
             $0.resetValueColor()
         }
         tileFps.resetChart(); tileBitrate.resetChart(); tileLatency.resetChart()
@@ -386,12 +506,20 @@ final class DashboardView: NSView {
     private(set) var summaryText = ""
     private(set) var summaryTone: Summary = .idle
 
-    func setSummary(_ text: String, _ state: Summary) {
+    func setSummary(_ text: String, _ state: Summary, key: TextKey? = nil,
+                    args: [any CVarArg] = []) {
+        summaryKey = key
+        summaryArgs = args
         summaryText = text
         summaryTone = state
         summaryState = state
         summaryLabel.stringValue = text
         paintSummary()
+    }
+
+    /// Özet satırını anahtarla kur: dil değişince aynı ögelerle yeniden çözülür.
+    func setSummary(_ key: TextKey, _ state: Summary, _ args: [any CVarArg] = []) {
+        setSummary(L10n.f(key, args), state, key: key, args: args)
     }
 
     /// Dolgu ve nokta renkleri görünüme göre çözülür.
@@ -417,8 +545,14 @@ final class DashboardView: NSView {
     }
 
     /// Düğme etiketi: grup/satır sayısı tek bakışta görünsün (liste ayrı ekranda).
+    /// Son çağrı hatırlanır ki dil değişince sayı Türkçe kalmasın.
     func reloadEvents(_ rows: [EventRow], groups: Int, lines: Int) {
-        eventsButton.title = rows.isEmpty ? "Olaylar" : "Olaylar — \(groups) grup, \(lines) satır"
+        lastRows = rows
+        lastGroups = groups
+        lastLines = lines
+        eventsButton.title = rows.isEmpty
+            ? L10n.t(.eventsTitle)
+            : L10n.f(.eventsCount, String(groups), String(lines))
         needsLayout = true
     }
 
@@ -551,7 +685,7 @@ final class EventRowView: NSView {
         timeLabel.stringValue = Self.time.string(from: row.last)
         timeLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .regular)
         timeLabel.textColor = .tertiaryLabelColor
-        textLabel.stringValue = row.text
+        textLabel.stringValue = row.rendered
         textLabel.font = NSFont.systemFont(ofSize: 11.5)
         textLabel.textColor = row.severity == .info ? .secondaryLabelColor : .labelColor
         textLabel.lineBreakMode = .byTruncatingMiddle
@@ -561,7 +695,8 @@ final class EventRowView: NSView {
         [led, timeLabel, textLabel, countLabel].forEach(addSubview)
         paint()
         setAccessibilityElement(true)
-        setAccessibilityLabel(row.count > 1 ? "\(row.text), \(row.count) kez" : row.text)
+        setAccessibilityLabel(row.count > 1
+            ? L10n.f(.eventRowRepeat, row.rendered, String(row.count)) : row.rendered)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -623,7 +758,7 @@ private final class EventRowStack: NSView {
 /// liste. Pano içinde katlanır liste gerçek tıklamayla açılmıyordu ve açılınca sığmıyordu
 /// — kullanıcı isteği üzerine ayrı ekran.
 final class EventsPageView: NSView {
-    let heading = NSTextField(labelWithString: "Olaylar")
+    let heading = NSTextField(labelWithString: L10n.t(.eventsTitle))
     /// Elzem satır: rozetteki durumun tamamı (yayın/kanal/kayıp) — pano görünmeden de okunsun.
     let statusLine = NSTextField(labelWithString: "")
     let subtitle = NSTextField(labelWithString: "")
@@ -638,6 +773,9 @@ final class EventsPageView: NSView {
     var onBack: (() -> Void)?
     var onClear: (() -> Void)?
     var onOpenLog: (() -> Void)?
+    private var languageWatch: LanguageWatch?
+    /// Son içerik: dil değişince satırlar anahtarlarından yeniden çözülür.
+    private var shownRows: [EventRow] = []
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -652,16 +790,13 @@ final class EventsPageView: NSView {
         statusLed.wantsLayer = true
         statusLed.layer?.cornerRadius = 4
         back.bezelStyle = .rounded
-        back.title = "Geri"
         back.keyEquivalent = "\u{1b}"                       // Esc
         back.target = self
         back.action = #selector(pressBack)
         clear.bezelStyle = .rounded
-        clear.title = "Temizle"
         clear.target = self
         clear.action = #selector(pressClear)
         openLog.bezelStyle = .rounded
-        openLog.title = "Ham günlüğü aç"
         openLog.target = self
         openLog.action = #selector(pressOpenLog)
         scroll.hasVerticalScroller = true
@@ -677,11 +812,24 @@ final class EventsPageView: NSView {
         // üstüne (sayfanın en üstüne) düşüyor ve başlıkla çakışıyordu.
         statusBox.addSubview(statusLine)
         statusBox.addSubview(statusLed)
+        applyLanguage()
+        languageWatch = LanguageWatch { [weak self] in self?.applyLanguage() }
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     override var isFlipped: Bool { true }
+
+    /// Başlık, düğme yazıları ve satır listesi görünen dilde yeniden çözülür.
+    /// Üstteki durum/sayaç satırları App'ten gelir: App kendi dil geçişinde `show`u çağırır.
+    func applyLanguage() {
+        heading.stringValue = L10n.t(.eventsTitle)
+        back.title = L10n.t(.eventsBack)
+        clear.title = L10n.t(.eventsClear)
+        openLog.title = L10n.t(.eventsOpenLog)
+        stack.rebuild(shownRows.map { EventRowView($0) })
+        needsLayout = true
+    }
 
     @objc private func pressBack() { onBack?() }
     @objc private func pressClear() { onClear?() }
@@ -692,6 +840,7 @@ final class EventsPageView: NSView {
     /// kaydırdığı yer sıfırlanmasın.
     func show(rows: [EventRow], status: String, counts: String,
               tone: DashboardView.Summary = .idle, resetScroll: Bool = false) {
+        shownRows = rows
         stack.rebuild(rows.map { EventRowView($0) })
         statusLine.stringValue = status
         subtitle.stringValue = counts

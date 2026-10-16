@@ -9,15 +9,11 @@ import AppKit
 /// pencere listesiyle **çerçeveçe aynı** boyutu kaplar (üst/alt kenar her boyutta hizalı).
 @MainActor
 final class TVScreenPanelView: NSView {
-    let title = NSTextField(labelWithString: "TV ekranı modu")
+    let title = NSTextField(labelWithString: L10n.t(.tvPanelTitle))
     let map = ScreenMapView()
     let body = NSTextField(wrappingLabelWithString: "")
     let screens = NSTextField(wrappingLabelWithString: "")
-
-    static let bodyText =
-        "Mac'te TV boyutunda AYRI bir ekran açılır; oraya taşıdığın pencereler ve sesler TV'de oynar. "
-        + "Kendi ekranlarında ne açarsan aç, TV yayını kopmaz. "
-        + "Sistem Ayarları → Masaüstü ve Dock → \"Ekranların ayrı Space'leri var\" açık kalmalı."
+    private var languageWatch: LanguageWatch?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -27,7 +23,6 @@ final class TVScreenPanelView: NSView {
         paint()
 
         title.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
-        body.stringValue = Self.bodyText
         body.font = NSFont.systemFont(ofSize: 11.5)
         body.textColor = .secondaryLabelColor
         body.maximumNumberOfLines = 4
@@ -36,11 +31,20 @@ final class TVScreenPanelView: NSView {
         screens.maximumNumberOfLines = 6
 
         [title, map, body, screens].forEach(addSubview)
+        applyLanguage()
+        languageWatch = LanguageWatch { [weak self] in self?.applyLanguage() }
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     override var isFlipped: Bool { true }
+
+    /// Başlık ve açıklama bloğu görünen dilde; ekran dökümü (`screens`) sayısal, dil gerektirmez.
+    func applyLanguage() {
+        title.stringValue = L10n.t(.tvPanelTitle)
+        body.stringValue = L10n.t(.tvPanelBody)
+        needsLayout = true
+    }
 
     /// Kart zemini/kenarı: tema değişince yeniden çözülür.
     private func paint() {
@@ -98,12 +102,15 @@ final class ScreenMapView: NSView {
     }
 
     private var items: [Item] = []
+    /// Çizimdeki tek yazı TV etiketi ("· TV") olduğu için dil geçişi yalnız yeniden çizim ister.
+    private var languageWatch: LanguageWatch?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.cornerRadius = 8
         paint()
+        languageWatch = LanguageWatch { [weak self] in self?.needsDisplay = true }
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -137,7 +144,7 @@ final class ScreenMapView: NSView {
         let dim: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 9),
                                                   .foregroundColor: NSColor.tertiaryLabelColor]
         guard !items.isEmpty else {
-            "ekran listesi alınamadı".draw(at: NSPoint(x: inset.minX, y: inset.midY),
+            L10n.t(.tvPanelNoScreens).draw(at: NSPoint(x: inset.minX, y: inset.midY),
                                            withAttributes: dim)
             return
         }
@@ -168,7 +175,7 @@ final class ScreenMapView: NSView {
             path.lineWidth = s.isTV ? 2 : 1
             path.stroke()
 
-            let name = shortName(s.isTV ? "\(s.name) · TV" : s.name)
+            let name = shortName(s.isTV ? L10n.f(.tvPanelMapTvName, s.name) : s.name)
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 10, weight: s.isTV ? .semibold : .regular),
                 .foregroundColor: s.isTV ? NSColor.controlAccentColor : NSColor.secondaryLabelColor,
@@ -194,7 +201,8 @@ final class ScreenMapView: NSView {
 
     override func accessibilityLabel() -> String? {
         items.map {
-            "\($0.name) \(Int($0.frame.width))×\(Int($0.frame.height))" + ($0.isTV ? " (TV ekranı)" : "")
+            "\($0.name) \(Int($0.frame.width))×\(Int($0.frame.height))"
+                + ($0.isTV ? L10n.t(.tvPanelMapTvSuffix) : "")
         }.joined(separator: " · ")
     }
 }
