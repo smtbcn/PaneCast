@@ -37,7 +37,9 @@ enum TvPresence {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
         }
 
-        let payload = Data(#"{"t":"find"}"#.utf8)
+        // `name` da yazılır: alıcı, bu paketi *kaynak adresinden* tanıyıp kendisine ulaşılabilen
+    // adresi öğrensin (çok arayüzlü Mac'te mDNS A kaydı yanlış arayüzü verebiliyor — ölçüldü).
+    let payload = Data(#"{"t":"find","name":"\#(HostName.current)"}"#.utf8)
         func shout() {
             var to = sockaddr_in()
             to.sin_family = sa_family_t(AF_INET)

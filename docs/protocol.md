@@ -33,6 +33,24 @@ timeout). That is why a POSIX `AF_INET` listener is used (`Tcp4Listener.swift`).
 - Fallback 1: the connection helper script (`scripts/tv-connect.sh`) browses the TV's built-in cast service record and reads its IP from it (Validated: device model in the TXT field and port 8009). The sender app itself does not browse that record — it only browses `_atvm._tcp`.
 - Fallback 2: manual IP entry (required by the task).
 
+### 2.1 Presence (UDP 7611) — the address a peer can actually be reached at
+
+The receiver side of discovery is symmetrical: the Mac advertises itself as
+`_atvm-sender._tcp`, `serviceName = "ATVM-<HostName>"`, `port = 7610`, and the TV browses that type.
+Pairing must also work before either side knows the other's address, so both ends answer a plain UDP
+probe on port **7611**:
+
+- The Mac broadcasts `{"t":"find","name":"<HostName>"}`. Every open receiver answers once, to the
+  packet's source, with `{"t":"tv","name":<model>,"ip":<its IPv4>,"cport":7601,"mport":7602,"paired":bool}`.
+- The receiver records the **source address of the `find` packet** as that Mac's reachable address and
+  tries it *first* when it starts a broadcast. A packet that arrived is proof the address routes back.
+
+Why this rule exists (measured 2026-10-17): a Mac whose two interfaces both sat inside the TV's own /24 —
+one carrying the route to the TV, the other an unrelated link — advertised the wrong A record. The TV dialed that
+address: 100 % ICMP loss, TCP 7610 dropped after 4 s, and pressing OK looked like a dead remote. Both
+candidates are inside the TV's own /24, so "prefer the same network" cannot separate them; the presence
+source address can.
+
 ## 3. Control messages
 
 Common field: `t` (message type). An unknown `t` is logged. Malformed JSON → `denied/bad_json`; the

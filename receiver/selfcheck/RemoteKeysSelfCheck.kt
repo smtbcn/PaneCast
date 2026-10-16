@@ -179,6 +179,26 @@ fun main() {
               listOf("198.51.100.67", "192.0.2.5") }, tv) == listOf("198.51.100.67", "192.0.2.5"))
     check("boş adres aday üretmez", SenderAddresses.expand("") { listOf("x") }.isEmpty())
 
+    // Yeğlenen adres: eşleşme yoklamasında TV'ye ulaşan paketin kaynağı. Çok arayüzlü Mac'te
+    // mDNS A kaydı TV ile aynı /24'te olan ama ulaşılabilir OLMAYAN adresi verebiliyor
+    // (ölçüldü: en0 .67 ulaşılabilir, en1 .112 %100 kayıp) — ağ-önceliği kuralı bu ikisini
+    // ayırt edemez, yüzden kaynak adres açıkça öne konmalı.
+    val sameNet = listOf("198.51.100.99")
+    check("yeğlenen adres aynı /24'teki ulaşılamaz adayın önüne geçer",
+          SenderAddresses.order(listOf("198.51.100.67", "198.51.100.5"), sameNet,
+                                preferred = "198.51.100.5")
+              == listOf("198.51.100.5", "198.51.100.67"))
+    check("yeğlenen adres listede zaten varsa tekilleşir",
+          SenderAddresses.order(listOf("198.51.100.5", "192.0.2.7"), sameNet,
+                                preferred = "198.51.100.5")
+              == listOf("198.51.100.5", "192.0.2.7"))
+    check("yeğlenen yoksa ağ-önceliği kuralı aynen çalışıyor",
+          SenderAddresses.order(listOf("192.0.2.5", "198.51.100.67"), sameNet, preferred = null)
+              == listOf("198.51.100.67", "192.0.2.5"))
+    check("boş yeğlenen elemeyle düşer, sırayı bozmaz",
+          SenderAddresses.order(listOf("192.0.2.5", "198.51.100.67"), sameNet, preferred = "")
+              == listOf("198.51.100.67", "192.0.2.5"))
+
     println(if (failures == 0) "TAMAM: $checks denetim geçti" else "$failures/$checks denetim başarısız")
     if (failures > 0) kotlin.system.exitProcess(1)
 }

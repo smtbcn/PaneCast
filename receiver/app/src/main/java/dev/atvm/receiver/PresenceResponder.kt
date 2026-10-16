@@ -27,6 +27,9 @@ class PresenceResponder(private val localIpv4s: () -> List<String>,
     private var thread: Thread? = null
     private val running = AtomicBoolean(false)
     private var queries = 0L
+    /// Ad → (kaynak adres, görüldüğü an). **Yayın paketi bizi bulduğuna göre o adrese
+    /// ulaşılabilir** — mDNS'in A kaydının yanlış arayüzü vermesinden doğan tek güvenilir kaynak.
+    private val senders = LinkedHashMap<String, Pair<String, Long>>()
 
     fun start() {
         if (running.getAndSet(true)) return
@@ -38,6 +41,30 @@ class PresenceResponder(private val localIpv4s: () -> List<String>,
         socket?.close()
         try { thread?.join(400) } catch (e: Exception) { }
         thread = null; socket = null
+    }
+
+    /** `find` gövdesindeki `name` + paketin kaynak adresi; ad yoksa adresle anılır. */
+    private fun recordSender(text: String, pkt: DatagramPacket) {
+        val from = pkt.address?.hostAddress ?: return
+        val name = try { JSONObject(text).optString("name", "") } catch (e: Exception) { "" }
+        val at = System.currentTimeMillis()
+        synchronized(senders) {
+            senders[name.ifBlank { from }] = from to at
+            while (senders.size > 8) senders.remove(senders.keys.first())
+        }
+    }
+
+    /** O bilgisayara son `maxAgeMs` içinde ulaşan paketin geldiği adres; yoksa null. */
+    fun senderAddress(name: String?, maxAgeMs: Long = 90_000): String? {
+        val key = name?.removePrefix("ATVM-")?.trim()
+        val now = System.currentTimeMillis()
+        synchronized(senders) {
+            val hit = senders[key].takeIf { it != null && now - it!!.second <= maxAgeMs }
+                ?: senders.entries.firstOrNull {
+                    it.value.second >= now - maxAgeMs && key != null && it.key.contains(key)
+                }?.value
+            return hit?.first
+        }
     }
 
     private fun loop() {
@@ -61,6 +88,7 @@ class PresenceResponder(private val localIpv4s: () -> List<String>,
                 val text = String(buf, 0, pkt.length, Charsets.UTF_8)
                 if (!text.contains("\"find\"")) continue
                 queries++
+                recordSender(text, pkt)
                 val ip = localIpv4s().firstOrNull() ?: continue
                 val reply = JSONObject()
                     .put("t", "tv")

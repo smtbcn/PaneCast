@@ -103,7 +103,20 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE"
 ditto "$APP" "$STAGE/PaneCast.app"
 ln -s /Applications "$STAGE/Applications"
-hdiutil create -volname "PaneCast" -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$DMG" >/dev/null
+# Disk imajı dış hacimde koşuluyor: `hdiutil create` arada bir "Resource busy" veriyor
+# (ölçüldü: 0.2.12 yayımında iki kez, üstüste koşumlarda). Kaynak tarafında bırakılmış bir
+# bağ varsa ondan kurtul, sonra kısa aralıklarla yeniden dene — sessiz başarısızlık yerine
+# denenmiş bir geri çekilme.
+for attempt in 1 2 3; do
+  if hdiutil create -volname "PaneCast" -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$DMG" >/dev/null 2>&1; then
+    break
+  fi
+  echo "dmg denemesi $attempt başarısız — temizlik + yeniden deneme" >&2
+  hdiutil detach "/Volumes/PaneCast" -force >/dev/null 2>&1 || true
+  rm -f "$DMG"
+  [ "$attempt" = 3 ] && { echo "dmg üretilemedi (3 deneme)" >&2; exit 1; }
+  sleep 4
+done
 if [[ "$UNSIGNED" == 0 ]]; then
   codesign --force --timestamp --sign "$SIGN_ID" "$DMG"
 fi

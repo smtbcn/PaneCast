@@ -32,6 +32,22 @@ SYN'i düşdü (ölçüldü: Mac'ten kendi LAN IP'ne bağlantı var, TV'den 6 sn
 - Yedek 1: bağlantı yardımcı betiği (`scripts/tv-connect.sh`), TV'nin yerleşik yayın hizmet kaydını tarayıp IP'sini oradan okur (Doğrulandı: TXT alanında cihaz modeli ve port 8009). Yayıncı uygulamanın kendisi o kaydı taramaz — yalnız `_atvm._tcp` tarar.
 - Yedek 2: elle IP girişi (görev gereği).
 
+### 2.1 Yoklama (UDP 7611) — eşin gerçekten ulaşılabildiği adres
+
+Keşfin alıcı yanı simetriktir: Mac kendini `_atvm-sender._tcp`, `serviceName = "ATVM-<HostName>"`,
+`port = 7610` olarak yayınlar; TV de bu türü tarar. Eşleşme, taraflar birbirinin adresini hiç
+bilmeden de olabilmeli; bu yüzden iki uç da UDP **7611** üzerindeki düz yoklamaya yanıt verir:
+
+- Mac ağa `{"t":"find","name":"<HostName>"}` yayar. Açık olan her alıcı, paketin kaynağına tek bir
+  yanıt yazar: `{"t":"tv","name":<model>,"ip":<kendi IPv4>,"cport":7601,"mport":7602,"paired":bool}`.
+- Alıcı, o **`find` paketin kaynak adresini** ilgili Mac'in ulaşılabilir adresi olarak not eder ve
+  yayını başlatırken *önce* onu dener. Ulaşmış bir paket, o adresten geri dönülebildiğinin kanıtıdır.
+
+Bu kural neden var (17.10.2026 ölçüldü): aynı /24'te iki arayüzü olan bir Mac — TV'ye giden yol `en0`
+üzerindeyken `en1` ilgisiz bir bağlantı — yanlış A kaydını yayınladı. TV o adresi aradı: ICMP'te %100
+kayıp, TCP 7610'da 4 sn sonra düşme; kumandada OK ölü görünüyordu. İki aday da TV'nin kendi /24'ünde
+olduğu için "aynı ağı tercih et" kuralı bunları ayırt edemiyor; yoklamanın kaynak adresi edebiliyor.
+
 ## 3. Kontrol mesajları
 
 Ortak alan: `t` (mesaj türü). Bilinmeyen `t` loglanır. Aykırı JSON → `denied/bad_json`; doğrulanmamış

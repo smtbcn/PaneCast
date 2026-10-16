@@ -750,10 +750,13 @@ class MainActivity : Activity(), ControlLink.Listener {
             // Mac'in sanal makine köprüsüne bağlanmaya çalıştı). Adın tüm adresleri çözülür,
             // TV'nin kendi ağındaki aday önce denenir.
             val mine = localIpv4s()
+            // mDNS'in verdiği adres yanlış arayüzde olabilir (çok arayüzlü Mac). Eşleşme
+            // yoklamasında TV'ye gerçekten ulaşan paketin kaynağı önce denenir.
+            val seen = presence.senderAddress(c.name)
             val targets = SenderAddresses.order(
                 SenderAddresses.expand(c.address) { name ->
                     java.net.InetAddress.getAllByName(name).mapNotNull { a -> a.hostAddress }
-                }, mine)
+                } + listOfNotNull(seen), mine, preferred = seen)
             Log.i(TAG, "yayın adayı ${targets.size} adres: ${targets.joinToString { it.substringBeforeLast('.') + ".*" }}")
             val err = SenderConnector.resume(targets, c.port, Build.MODEL,
                 mine.firstOrNull() ?: "", Protocol.MEDIA_PORT, key, control)
