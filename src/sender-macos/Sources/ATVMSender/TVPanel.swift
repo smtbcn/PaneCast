@@ -24,8 +24,7 @@ final class TVScreenPanelView: NSView {
         wantsLayer = true
         layer?.cornerRadius = 10
         layer?.borderWidth = 1
-        layer?.backgroundColor = NSColor.secondaryLabelColor.withAlphaComponent(0.06).cgColor
-        layer?.borderColor = NSColor.separatorColor.cgColor
+        paint()
 
         title.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
         body.stringValue = Self.bodyText
@@ -42,6 +41,17 @@ final class TVScreenPanelView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     override var isFlipped: Bool { true }
+
+    /// Kart zemini/kenarı: tema değişince yeniden çözülür.
+    private func paint() {
+        layer?.backgroundColor = Theme.card.cgColor
+        layer?.borderColor = Theme.cardStroke.cgColor
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        effectiveAppearance.performAsCurrentDrawingAppearance { paint() }
+    }
 
     /// Ekran dizilimi değişince harita ve altındaki metin yenilenir.
     func setScreens(_ items: [ScreenLayout.Screen], tvName: String) {
@@ -93,10 +103,24 @@ final class ScreenMapView: NSView {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.cornerRadius = 8
-        layer?.backgroundColor = NSColor.textBackgroundColor.withAlphaComponent(0.5).cgColor
+        paint()
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// Gömülü alan zemini: açık temada beyaz üstüne beyaz kalmasın.
+    private func paint() {
+        layer?.backgroundColor = Theme.well.cgColor
+    }
+
+    /// Çizimler görünüme göre renk çözer: tema değişince yeniden çiz.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            paint()
+            needsDisplay = true
+        }
+    }
 
     /// Çizim matematiği üstten hesaplı (y aşağı büyür): panelin geri kalanıyla aynı yönde olsun.
     /// Ölçülen kusur: `isFlipped` ezilmezse ekranlar dikeyde ayna görüntüsü diziliyor,
@@ -134,10 +158,13 @@ final class ScreenMapView: NSView {
             let y = oy + (maxY - s.frame.maxY) * scale
             let rect = NSRect(x: x, y: y, width: s.frame.width * scale, height: s.frame.height * scale)
             let path = NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5)
-            (s.isTV ? NSColor.controlAccentColor : NSColor.secondaryLabelColor)
-                .withAlphaComponent(s.isTV ? 0.30 : 0.10).setFill()
+            // Dolgu ve kenar iki temada da seçilsin: açık temada %10 `secondaryLabelColor`
+            // dolgusu gömülü alanın içinde görünmez kalıyordu.
+            (s.isTV ? NSColor.controlAccentColor.withAlphaComponent(0.30)
+                    : NSColor.tertiaryLabelColor).setFill()
             path.fill()
-            (s.isTV ? NSColor.controlAccentColor : NSColor.separatorColor).setStroke()
+            (s.isTV ? NSColor.controlAccentColor
+                    : NSColor.secondaryLabelColor.withAlphaComponent(0.55)).setStroke()
             path.lineWidth = s.isTV ? 2 : 1
             path.stroke()
 

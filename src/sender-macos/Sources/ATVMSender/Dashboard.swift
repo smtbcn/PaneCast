@@ -7,8 +7,9 @@ enum EventSeverity: Int, Comparable {
     var color: NSColor {
         switch self {
         case .info: return .tertiaryLabelColor
-        case .warn: return .systemOrange
-        case .error: return .systemRed
+        // Tema tonları: açık temada saf systemOrange/systemRed noktası beyaz kartta kayboluyor.
+        case .warn: return Theme.warnText
+        case .error: return Theme.badText
         }
     }
 }
@@ -152,8 +153,14 @@ final class ChipView: NSView {
         case .idle: color = .tertiaryLabelColor
         }
         led.layer?.backgroundColor = color.cgColor
-        layer?.backgroundColor = NSColor.secondaryLabelColor.withAlphaComponent(0.10).cgColor
-        layer?.borderColor = NSColor.separatorColor.cgColor
+        layer?.backgroundColor = Theme.chipFill.cgColor
+        layer?.borderColor = Theme.cardStroke.cgColor
+    }
+
+    /// Katman zemini çözülmüş `CGColor` tutar: sistem teması değişince kendiliğinden gelmez.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        effectiveAppearance.performAsCurrentDrawingAppearance { tint() }
     }
 
     override var isFlipped: Bool { true }
@@ -193,8 +200,7 @@ final class MetricTile: NSView {
         wantsLayer = true
         layer?.cornerRadius = 9
         layer?.borderWidth = 1
-        layer?.backgroundColor = NSColor.secondaryLabelColor.withAlphaComponent(0.08).cgColor
-        layer?.borderColor = NSColor.separatorColor.cgColor
+        paint()
         titleLabel.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
         titleLabel.textColor = .secondaryLabelColor
         titleLabel.stringValue = title.uppercased()
@@ -210,6 +216,17 @@ final class MetricTile: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// Kart zemini + kenarı; tema değişince yeniden çağrılır.
+    private func paint() {
+        layer?.backgroundColor = Theme.card.cgColor
+        layer?.borderColor = Theme.cardStroke.cgColor
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        effectiveAppearance.performAsCurrentDrawingAppearance { paint() }
+    }
 
     func set(_ value: String, unit: String = "", detail: String? = nil) {
         valueLabel.stringValue = value
@@ -340,7 +357,7 @@ final class DashboardView: NSView {
                        detail: "NACK \(s.nackRequests) · yedek \(s.retransmitted) · düşen \(s.dropped)")
         // Sağlık **yalnız kayıptan** hesaplanır: hareketsiz pencerede SCK kare göndermez,
         // düşük fps tek başına arıza değildir (ölçüldü: duran pencerede 0,6 fps, kayıp 0).
-        tileHealth.tint(trouble == 0 ? .systemGreen : .systemOrange)
+        tileHealth.tint(trouble == 0 ? Theme.okText : Theme.warnText)
         needsLayout = true
     }
 
@@ -360,6 +377,7 @@ final class DashboardView: NSView {
     }
 
     enum Summary { case idle, ok, warn, bad }
+    private var summaryState: Summary = .idle
 
     /// Özet satırının metni ve tonu: olay ekranı üst bilgisi de buradan okur (tek kaynak).
     private(set) var summaryText = ""
@@ -368,20 +386,31 @@ final class DashboardView: NSView {
     func setSummary(_ text: String, _ state: Summary) {
         summaryText = text
         summaryTone = state
+        summaryState = state
         summaryLabel.stringValue = text
+        paintSummary()
+    }
+
+    /// Dolgu ve nokta renkleri görünüme göre çözülür.
+    private func paintSummary() {
         let bg: NSColor
         let led: NSColor
-        switch state {
+        switch summaryState {
         case .idle: bg = .quaternaryLabelColor; led = .tertiaryLabelColor
         case .ok: bg = .systemGreen; led = .systemGreen
         case .warn: bg = .systemOrange; led = .systemOrange
         case .bad: bg = .systemRed; led = .systemRed
         }
-        summaryBar.layer?.backgroundColor = bg.withAlphaComponent(state == .idle ? 0.14 : 0.16).cgColor
+        summaryBar.layer?.backgroundColor = Theme.tintedFill(bg).cgColor
         summaryBar.layer?.borderColor = bg.withAlphaComponent(0.45).cgColor
         summaryBar.layer?.borderWidth = 1
         summaryLed.layer?.backgroundColor = led.cgColor
         summaryLed.layer?.cornerRadius = 4
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        effectiveAppearance.performAsCurrentDrawingAppearance { paintSummary() }
     }
 
     /// Düğme etiketi: grup/satır sayısı tek bakışta görünsün (liste ayrı ekranda).
@@ -497,6 +526,7 @@ final class EventRowView: NSView {
     private let timeLabel = NSTextField(labelWithString: "")
     private let textLabel = NSTextField(labelWithString: "")
     private let countLabel = NSTextField(labelWithString: "")
+    private var severity: EventSeverity = .info
 
     private static let time: DateFormatter = {
         let f = DateFormatter()
@@ -506,8 +536,8 @@ final class EventRowView: NSView {
 
     init(_ row: EventRow) {
         super.init(frame: .zero)
+        severity = row.severity
         led.wantsLayer = true
-        led.layer?.backgroundColor = row.severity.color.cgColor
         led.layer?.cornerRadius = 3.5
         timeLabel.stringValue = Self.time.string(from: row.last)
         timeLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .regular)
@@ -520,11 +550,23 @@ final class EventRowView: NSView {
         countLabel.font = NSFont.systemFont(ofSize: 10.5, weight: .semibold)
         countLabel.textColor = .tertiaryLabelColor
         [led, timeLabel, textLabel, countLabel].forEach(addSubview)
+        paint()
         setAccessibilityElement(true)
         setAccessibilityLabel(row.count > 1 ? "\(row.text), \(row.count) kez" : row.text)
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// Nokta rengi görünüme göre çözülür (açık temada bilgi tonu solda kalmasın).
+    private func paint() {
+        led.layer?.backgroundColor = severity.color.cgColor
+        textLabel.textColor = severity == .info ? .secondaryLabelColor : .labelColor
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        effectiveAppearance.performAsCurrentDrawingAppearance { paint() }
+    }
 
     override var isFlipped: Bool { true }
 
@@ -598,11 +640,8 @@ final class EventsPageView: NSView {
         statusBox.wantsLayer = true
         statusBox.layer?.cornerRadius = 8
         statusBox.layer?.borderWidth = 1
-        statusBox.layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.14).cgColor
-        statusBox.layer?.borderColor = NSColor.separatorColor.cgColor
         statusLed.wantsLayer = true
         statusLed.layer?.cornerRadius = 4
-        statusLed.layer?.backgroundColor = NSColor.tertiaryLabelColor.cgColor
         back.bezelStyle = .rounded
         back.title = "Geri"
         back.keyEquivalent = "\u{1b}"                       // Esc
@@ -647,20 +686,37 @@ final class EventsPageView: NSView {
         stack.rebuild(rows.map { EventRowView($0) })
         statusLine.stringValue = status
         subtitle.stringValue = counts
-        let color: NSColor
-        switch tone {
-        case .idle: color = .tertiaryLabelColor
-        case .ok: color = .systemGreen
-        case .warn: color = .systemOrange
-        case .bad: color = .systemRed
-        }
-        statusLed.layer?.backgroundColor = color.cgColor
-        statusLine.textColor = tone == .idle ? .labelColor : color
+        summaryTone = tone
+        paintStatus()
         needsLayout = true
         if resetScroll {
             scroll.contentView.scroll(to: .zero)
             scroll.reflectScrolledClipView(scroll.contentView)
         }
+    }
+
+    private var summaryTone: DashboardView.Summary = .idle
+
+    /// Üstteki elzem satırın tonu: tema değişince de yeniden çözülür.
+    private func paintStatus() {
+        let dot: NSColor
+        let text: NSColor
+        let fill: NSColor
+        switch summaryTone {
+        case .idle: dot = .tertiaryLabelColor; text = .labelColor; fill = .quaternaryLabelColor
+        case .ok: dot = Theme.okText; text = Theme.okText; fill = NSColor.systemGreen
+        case .warn: dot = Theme.warnText; text = Theme.warnText; fill = NSColor.systemOrange
+        case .bad: dot = Theme.badText; text = Theme.badText; fill = NSColor.systemRed
+        }
+        statusBox.layer?.backgroundColor = Theme.tintedFill(fill).cgColor
+        statusBox.layer?.borderColor = Theme.cardStroke.cgColor
+        statusLed.layer?.backgroundColor = dot.cgColor
+        statusLine.textColor = text
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        effectiveAppearance.performAsCurrentDrawingAppearance { paintStatus() }
     }
 
     override func layout() {

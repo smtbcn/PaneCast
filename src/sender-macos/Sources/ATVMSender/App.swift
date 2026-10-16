@@ -55,6 +55,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private let windowHint = NSTextField(labelWithString: "")
     private let modeControl = NSSegmentedControl(labels: ["Pencere", "TV ekranı (ayrı ekran)"],
                                                  trackingMode: .selectOne, target: nil, action: nil)
+    /// Tema seçimi: varsayılan "Sistem" (Açık/Koyu'yu macOS ayarından izler). Katman
+    /// renkleri elle çözüldüğü için bu kutu aynı zamanda temanın canlı test edilmesini sağlar.
+    private let themePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     /// TV ekranı modunun sol sütunu: ekran haritası + açıklama (boş metin bloğu değil).
     private let tvPanel = TVScreenPanelView(frame: .zero)
     /// Yalnız TV ekranı modunda görünen görünümler.
@@ -179,6 +182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         let content = LayoutView(frame: NSRect(x: 0, y: 0, width: 1180, height: 760))
         root = content
         content.onLayout = { [weak self] size in self?.layoutRoot(size) }
+        content.onAppearance = { [weak self] in self?.refreshRunButton() }
 
         titleLabel.font = NSFont.systemFont(ofSize: 17, weight: .semibold)
         content.addSubview(titleLabel)
@@ -203,6 +207,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         modeControl.target = self
         modeControl.action = #selector(modeChanged)
         content.addSubview(modeControl)
+
+        themePopup.addItems(withTitles: ["Tema · Sistem", "Tema · Açık", "Tema · Koyu"])
+        let saved = Self.appearanceChoice.flatMap { ["system", "aqua", "darkAqua"].firstIndex(of: $0) } ?? 0
+        themePopup.selectItem(at: saved)
+        themePopup.target = self
+        themePopup.action = #selector(themeChanged)
+        themePopup.setAccessibilityLabel("Tema")
+        themePopup.toolTip = "Sistem: macOS'un Açık/Koyu ayarını izler."
+        content.addSubview(themePopup)
+        applyAppearance()
 
         // ---------- gövde: kaydırılabilir ızgara ----------
         bodyScroll.hasVerticalScroller = true
@@ -340,6 +354,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         let modeW = min(330, max(180, w - 2 * inset - titleW - 200))
         modeControl.frame = NSRect(x: inset + titleW + 12, y: 10, width: modeW, height: 26)
         statusPill.frame = NSRect(x: w - inset - 180, y: 12, width: 180, height: 24)
+        // Tema kutusu rozedin solunda; başlık sırası sıkışınca kalkar (gövde kaydırılabiliyor,
+        // başlık sırası kaydırılamıyor → burada sıkışıklığa izin vermiyoruz).
+        let themeW: CGFloat = 132
+        let themeShows = w - 2 * inset - 180 - 8 - themeW > inset + titleW + 12 + modeW
+        themePopup.isHidden = !themeShows
+        if themeShows {
+            themePopup.frame = NSRect(x: w - inset - 180 - 8 - themeW, y: 10, width: themeW, height: 26)
+        }
 
         let availW = w
         let availH = max(80, h - Grid.headerH)
@@ -644,6 +666,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     @objc private func profileChanged() {
         refreshRunButton()
         note("Kanal profili: \(profilePopup.titleOfSelectedItem ?? "—")")
+    }
+
+    // ---------- tema ----------
+
+    /// Kullanıcının seçimi: "system" (varsayılan) | "aqua" | "darkAqua".
+    private static let appearanceKey = "appearance"
+    private static var appearanceChoice: String? {
+        UserDefaults.standard.string(forKey: appearanceKey)
+    }
+
+    @objc private func themeChanged() {
+        let pick = ["system", "aqua", "darkAqua"][themePopup.indexOfSelectedItem]
+        UserDefaults.standard.set(pick, forKey: Self.appearanceKey)
+        applyAppearance()
+        note("Tema: \(themePopup.titleOfSelectedItem ?? pick)")
+    }
+
+    /// Seçim uygulama görünümüne işlenir; "system" seçiliyken macOS ayarı izlenir.
+    /// AppKit etkin görünüm değişen her görünüme `viewDidChangeEffectiveAppearance` çağırır;
+    /// burada yalnız App'in kendi boyadığı katmanlar (rozet, Başlat düğmesi) tazelenir.
+    private func applyAppearance() {
+        let pick = ["system", "aqua", "darkAqua"][max(0, themePopup.indexOfSelectedItem)]
+        NSApp.appearance = pick == "system" ? nil : NSAppearance(named: pick == "aqua" ? .aqua : .darkAqua)
+        refreshRunButton()
     }
 
 
@@ -1017,7 +1063,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
             .paragraphStyle: style,
         ])
-        startStop.layer?.backgroundColor = (engine.isRunning ? NSColor.systemRed : NSColor.systemGreen).cgColor
+        startStop.effectiveAppearance.performAsCurrentDrawingAppearance {
+            startStop.layer?.backgroundColor = (engine.isRunning ? Theme.stopFill : Theme.goFill).cgColor
+        }
     }
 
     /// Ekran dizilimini canlı yazar: sanal ekran açıldıkça konumu değişebiliyor.
@@ -1049,9 +1097,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     /// Rozet rengi **yayın durumundan** gelir, metinden değil: metin geçici uyarıları da
     /// gösterebildiği için ("Akış takıldı" gibi) renk yalan söylemesin — yeşil = yayında,
     /// kırmızı = yayında değil.
+    ///
+    /// Renk, rozetin kendi görünüm bağlamında çözülür: `NSApp.appearance` atandıktan hemen
+    /// sonra çağrıldığında süreç hâlâ eski temayı görüyordu (ölçüldü: açık temaya geçince
+    /// rozet koyu temanın kırmızısıyla kaldı).
     private func setStatus(_ text: String) {
         statusText.stringValue = text
-        statusPill.layer?.backgroundColor = (engine.isRunning ? NSColor.systemGreen : NSColor.systemRed).cgColor
+        let fill = engine.isRunning ? Theme.goFill : Theme.stopFill
+        statusPill.effectiveAppearance.performAsCurrentDrawingAppearance {
+            statusPill.layer?.backgroundColor = fill.cgColor
+        }
         refreshEventsPage()
     }
 
@@ -1258,10 +1313,17 @@ final class DeviceCell: NSTableCellView {
 /// böylece satır sırası yukarıdan aşağıya okunur.
 final class LayoutView: NSView {
     var onLayout: ((NSSize) -> Void)?
+    /// Sistem teması değişince katman zeminlerini yeniden boyamak için (renkler `CGColor`
+    /// olarak çözüldüğünden AppKit bunları kendiliğinden güncellemiyor).
+    var onAppearance: (() -> Void)?
     override var isFlipped: Bool { true }
     override func layout() {
         super.layout()
         onLayout?(bounds.size)
+    }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        onAppearance?()
     }
 }
 
