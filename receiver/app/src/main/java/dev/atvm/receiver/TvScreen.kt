@@ -277,18 +277,29 @@ class TvScreen(private val context: Context, private val ui: Handler) {
             }
             val card = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(dp(26), dp(18), dp(26), dp(18))
+                // Yükseklik kısaltıldı (kullanıcı isteği): dikey dolgu 18→12dp ve durum
+                // noktası başlığın sağına taşınınca altına ayrılan 10dp + 8dp'lik sıra kalktı.
+                setPadding(dp(22), dp(12), dp(22), dp(12))
                 isFocusable = true
                 isFocusableInTouchMode = false
-                // Ölçülen kusur: `maxLines = 1` tek başına yetmiyor, uzun ad kartın
-                // sağ kenarında ellipsis olmadan kesiliyordu. setSingleLine + MIDDLE
-                // kesme gerekiyor: böylece hem ad hem uzantısı görünür kalır.
-                addView(label(21f, Color.WHITE, Typeface.create("sans-serif-medium", Typeface.BOLD)).apply {
-                    text = c.name; setSingleLine(true); ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
-                })
+                // Başlık sırası: ad solda kalan genişliği alır, durum noktası SAĞ ÜSTTE durur.
+                // Nokta alt alta değil yan yana: kart böylece bir satıra yakın kısalıyor.
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    // Ölçülen kusur: `maxLines = 1` tek başına yetmiyor, uzun ad ellipsis
+                    // olmadan kesiliyordu → setSingleLine + MIDDLE.
+                    addView(label(21f, Color.WHITE, Typeface.create("sans-serif-medium", Typeface.BOLD)).apply {
+                        text = c.name; setSingleLine(true); ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+                    }, LinearLayout.LayoutParams(-2, -2, 1f))
+                    addView(View(context).apply { background = round(base, 10) },
+                            LinearLayout.LayoutParams(dp(8), dp(8)).apply {
+                                gravity = Gravity.TOP; topMargin = dp(5); marginStart = dp(10)
+                            })
+                }, LinearLayout.LayoutParams(-1, -2))
                 addView(label(14f, 0xFF9FB4CE.toInt()).apply {
                     text = c.detail; setSingleLine(true); ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
-                }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
+                }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
                 setOnClickListener { onCardSelected?.invoke(index) }
                 setOnFocusChangeListener { v, has ->
                     v.background = if (has) round(0xFF17263D.toInt(), 18, 0xFF6FA8FF.toInt(), 3)
@@ -310,9 +321,6 @@ class TvScreen(private val context: Context, private val ui: Handler) {
                 width = dp(232)          // eşit kart genişliği: odak çerçevesi de eşit görünsün
             })
             if (index == 0 && rootFocus == null) card.requestFocus()
-            // Durum noktası: kartın rengiyle değil, küçük bir işaretçiyle anlatılır.
-            card.addView(View(context).apply { background = round(base, 10) },
-                    LinearLayout.LayoutParams(dp(8), dp(8)).apply { topMargin = dp(10) })
         }
     }
 
