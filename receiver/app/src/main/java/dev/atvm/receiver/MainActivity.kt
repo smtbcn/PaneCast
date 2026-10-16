@@ -35,13 +35,9 @@ class MainActivity : Activity(), ControlLink.Listener {
     /** Yerleşimi hesaplanan son görüntü boyutu (gereksiz layout'u önlemek için). */
     private var fittedW = 0
     private var fittedH = 0
-    private lateinit var statusText: TextView
-    private lateinit var headerText: TextView
-    private lateinit var debugText: TextView
+    /// Ekranın tamamı tek yerden çizilir: durum → TvScreen.State → render.
+    private lateinit var screen: TvScreen
     private var showDebug = false
-    private lateinit var pinText: TextView
-    private lateinit var pinLabel: TextView
-    private lateinit var pinTimer: TextView
     private var surface: Surface? = null
     private lateinit var control: ControlLink
     private lateinit var decoder: H264DecoderRenderer
@@ -57,14 +53,13 @@ class MainActivity : Activity(), ControlLink.Listener {
     private val ui = Handler(Looper.getMainLooper())
     private var nsdRegistration: NsdManager.RegistrationListener? = null
     private var browser: SenderBrowser? = null
-    private lateinit var devicePanel: android.widget.LinearLayout
-    private lateinit var deviceList: android.widget.ListView
     private val computers = arrayListOf<SenderBrowser.Computer>()
-    private lateinit var deviceAdapter: android.widget.ArrayAdapter<SenderBrowser.Computer>
     @Volatile private var resuming = false
     private var streaming = false
     private var currentPin: String? = null
-    private lateinit var pinPanel: android.view.View
+    /// PIN sayacı: statsRunnable doldurur, ekran State üzerinden okur.
+    private var pinLeft = 0
+    private var pinLock = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -96,8 +91,8 @@ class MainActivity : Activity(), ControlLink.Listener {
         presence = PresenceResponder({ localIpv4s() }, { control.isPaired })
         browser = SenderBrowser(applicationContext) { list ->
             runOnUiThread {
-                computers.clear(); computers.addAll(list); deviceAdapter.notifyDataSetChanged()
-                updatePanels()
+                computers.clear(); computers.addAll(list)
+                renderStatus()
             }
         }
         browser?.start()
@@ -123,118 +118,16 @@ class MainActivity : Activity(), ControlLink.Listener {
                     ui.post { stopStream("surface yok edildi") }
                 }
             })
-            setOnFocusChangeListener { _, has -> if (has) renderStatus() }
         }
-        statusText = TextView(this).apply {
-            setTextColor(0xFFFFFFFF.toInt())
-            textSize = 16f
-            setBackgroundColor(0xB0000000.toInt())
-            setPadding(24, 16, 24, 16)
-        }
-        // Üst şerit: ne olduğu net okunsun; teknik sayaçlar MENU ile açılan katmanın içinde.
-        headerText = TextView(this).apply {
-            setTextColor(0xFFFFFFFF.toInt())
-            textSize = 20f
-            setBackgroundColor(0xB0000000.toInt())
-            setPadding(24, 14, 24, 14)
-            maxLines = 2
-        }
-        debugText = TextView(this).apply {
-            setTextColor(0xFFBFD0E8.toInt())
-            textSize = 14f
-            setBackgroundColor(0xC0000000.toInt())
-            setPadding(24, 16, 24, 16)
-            visibility = android.view.View.GONE
-        }
-        // Ekran görüntüsüyle doğrulanan kusur: başlık + kod tek TextView'de 64sp ile
-        // satırlara sarıyor ve PIN kodu kutudan taşıp görünmüyordu.
-        // Şimdi başlık küçük, kod ayrı ve tek satırda, ekranın ortasında.
-        pinLabel = TextView(this).apply {
-            setTextColor(0xFFB6C2D9.toInt())
-            textSize = 26f
-            gravity = android.view.Gravity.CENTER
-            text = "Eşleştirme PIN'i — bu kodu Mac'teki uygulamaya girin"
-            visibility = android.view.View.GONE
-        }
-        pinTimer = TextView(this).apply {
-            setTextColor(0xFF8A97AE.toInt())
-            textSize = 22f
-            gravity = android.view.Gravity.CENTER
-            maxLines = 1
-            visibility = android.view.View.GONE
-        }
-        pinText = TextView(this).apply {
-            setTextColor(0xFFFFFFFF.toInt())
-            textSize = 132f
-            letterSpacing = 0.12f
-            typeface = android.graphics.Typeface.MONOSPACE
-            gravity = android.view.Gravity.CENTER
-            includeFontPadding = false
-            maxLines = 1
-            setSingleLine(true)
-            visibility = android.view.View.GONE
-        }
+        // Yalnız hata-ayıklama sürümünde çalışan önizleme bağlantısı: READY ve YAYINDA
+        // ekranlarının tasarımı, gerçek eşleşme/ağ olmadan da ekranda görülebilsin
+        // (emülatör/cihazda `am start --ei preview 1|2`). Sürüm derlemesinde bayrak yok.
+        preview = if (isDebugBuild) intent?.getIntExtra("preview", 0) ?: 0 else 0
+        screen = TvScreen(this, ui)
+        // Kart seçimi = OK: framework odak araması ◀▶▲▼'yi kendisi yönetir.
+        screen.onCardSelected = { pos -> startFromSelectedDevice(pos) }
         root.addView(surfaceView, FrameLayout.LayoutParams(-1, -1))
-        root.addView(headerText, FrameLayout.LayoutParams(-2, -2, android.view.Gravity.TOP or android.view.Gravity.START))
-        root.addView(statusText, FrameLayout.LayoutParams(-2, -2, android.view.Gravity.BOTTOM or android.view.Gravity.START))
-        root.addView(debugText, FrameLayout.LayoutParams(-2, -2, android.view.Gravity.END or android.view.Gravity.TOP))
-        val pinStack = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
-            gravity = android.view.Gravity.CENTER
-            setBackgroundColor(0xCC05070D.toInt())
-            setPadding(64, 48, 64, 48)
-            addView(pinLabel, android.widget.LinearLayout.LayoutParams(-2, -2))
-            addView(pinText, android.widget.LinearLayout.LayoutParams(-2, -2).apply { topMargin = 18 })
-            addView(pinTimer, android.widget.LinearLayout.LayoutParams(-2, -2).apply { topMargin = 14 })
-            visibility = android.view.View.GONE
-        }
-        pinPanel = pinStack
-        root.addView(pinStack, FrameLayout.LayoutParams(-2, -2, android.view.Gravity.CENTER))
-
-        // Eşleşme yapıldıysa: TV tarafından bilgisayarı seçip yayını BURADAN başlatabilirsin.
-        // Satır iki satırdır: ad büyük, adres+kılavuz soluk (tek satır okunaksız görünüyordu).
-        deviceAdapter = object : android.widget.ArrayAdapter<SenderBrowser.Computer>(this,
-            android.R.layout.simple_list_item_activated_1, computers) {
-            override fun getView(position: Int, convertView: android.view.View?,
-                                 parent: android.view.ViewGroup): android.view.View {
-                val c = getItem(position) ?: return super.getView(position, convertView, parent)
-                return android.widget.LinearLayout(context).apply {
-                    orientation = android.widget.LinearLayout.VERTICAL
-                    setPadding(28, 18, 28, 18)
-                    addView(TextView(context).apply {
-                        text = c.name.removePrefix("ATVM-").replace('_', ' ')
-                        setTextColor(0xFFFFFFFF.toInt()); textSize = 24f; maxLines = 1
-                    })
-                    addView(TextView(context).apply {
-                        text = "${c.address}:${c.port}  ·  OK: yayını başlat"
-                        // Satır odaklıyken turuncu vurgu üstünde soluk mavi okunmuyordu.
-                        setTextColor(0xFFE8F0FA.toInt()); textSize = 15f
-                    })
-                }
-            }
-        }
-        devicePanel = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
-            setBackgroundColor(0xE60B1220.toInt())
-            setPadding(36, 28, 36, 20)
-            visibility = android.view.View.GONE
-        }
-        devicePanel.addView(TextView(this).apply {
-            text = "Yayın başlatmak için bilgisayarı seç"
-            setTextColor(0xFFFFFFFF.toInt()); textSize = 26f
-        }, android.widget.LinearLayout.LayoutParams(-2, -2))
-        devicePanel.addView(TextView(this).apply {
-            text = "Arama tuşu: yeniden tara · Geri: kapat"
-            setTextColor(0xFF8A97AE.toInt()); textSize = 18f
-        }, android.widget.LinearLayout.LayoutParams(-2, -2).apply { topMargin = 6 })
-        deviceList = android.widget.ListView(this).apply {
-            adapter = deviceAdapter
-            choiceMode = android.widget.AbsListView.CHOICE_MODE_SINGLE
-            isFocusable = true
-            setOnItemClickListener { _, _, pos, _ -> startFromSelectedDevice(pos) }
-        }
-        devicePanel.addView(deviceList, android.widget.LinearLayout.LayoutParams(620, 420).apply { topMargin = 14 })
-        root.addView(devicePanel, FrameLayout.LayoutParams(-2, -2, android.view.Gravity.CENTER))
+        root.addView(screen.view(), FrameLayout.LayoutParams(-1, -1))
         setContentView(root)
     }
 
@@ -265,24 +158,15 @@ class MainActivity : Activity(), ControlLink.Listener {
 
     override fun onPinShown(pin: String) {
         currentPin = pin
-        ui.post {
-            pinText.text = pin
-            // pinText/pinLabel başta GONE; görünür yapılmazsa kod ekranda hiç belirmez
-            // (ekran görüntüsüyle doğrulanan kusur).
-            pinLabel.visibility = android.view.View.VISIBLE
-            pinText.visibility = android.view.View.VISIBLE
-            pinTimer.visibility = android.view.View.VISIBLE
-            pinPanel.visibility = android.view.View.VISIBLE
-            renderStatus()
-        }
+        // Görünürlük kararı renderStatus'un içinde: eski yolda etiket/kod GONE kalıp
+        // ekranda hiç belirmiyordu (ekran görüntüsüyle doğrulanmıştı).
+        ui.post { renderStatus() }
         Log.i(TAG, "PIN ekranda gösteriliyor (değer loglanmaz)")
     }
 
     override fun onPaired(sessionId: String) {
         Log.i(TAG, "eşleşme tamam session=$sessionId")
         ui.post {
-            pinPanel.visibility = android.view.View.GONE
-            pinTimer.visibility = android.view.View.GONE
             currentPin = null
             renderStatus()
         }
@@ -343,11 +227,7 @@ class MainActivity : Activity(), ControlLink.Listener {
             "ssrc=${p.ssrc} port=${p.mediaPort} ses=${if (p.audioPayloadType >= 0) "${p.audioSampleRate}Hz/${p.audioChannels}ch pt=${p.audioPayloadType}" else "yok"} " +
             "ortak saat=${if (p.sync) "var" else "yok"}")
         // Bu geri çağırma kontrol bağlantısının iş parçacığında çalışır: view'lara yalnızca UI iş parçacığında dokunulur.
-        ui.post {
-            pinPanel.visibility = android.view.View.GONE
-            devicePanel.visibility = android.view.View.GONE
-            renderStatus()
-        }
+        ui.post { renderStatus() }
         return true
     }
 
@@ -434,14 +314,13 @@ class MainActivity : Activity(), ControlLink.Listener {
 
     private val statsRunnable = object : Runnable {
         override fun run() {
-            renderStatus()
-            if (!streaming && pinPanel.visibility == android.view.View.VISIBLE) {
-                val left = control.pinSecondsLeft()
-                val lock = control.lockSecondsLeft()
-                if (lock > 0) pinTimer.text = "Çok fazla hatalı deneme · $lock sn sonra yeniden denenebilir"
-                else if (left <= 0) { control.displayPin(force = true) }
-                else pinTimer.text = "Bu kod $left saniye geçerli · yenisi için SELECT"
+            // PIN sayacı tek yerde tutulur: ekran bunu State üzerinden okur.
+            if (!streaming && !control.isPaired) {
+                pinLeft = control.pinSecondsLeft()
+                pinLock = control.lockSecondsLeft()
+                if (pinLock == 0 && pinLeft <= 0 && currentPin != null) control.displayPin(force = true)
             }
+            renderStatus()
             if (streaming) logStats()
             ui.postDelayed(this, STATS_INTERVAL_MS)
         }
@@ -505,46 +384,95 @@ class MainActivity : Activity(), ControlLink.Listener {
         ui.removeCallbacks(statsRunnable)
     }
 
+    private val isDebugBuild: Boolean
+        get() = (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+    private var preview = 0
+
+    /** Önizleme modunda gerçek yerine tasarım verisi çizilir (yalnız hata-ayıklama sürümü). */
+    private fun previewState(kind: RemoteKeys.Screen): TvScreen.State {
+        val cards = listOf(
+            TvScreen.Card("Masaüstü-Mac", "192.0.2.10:7601", TvScreen.CardState.READY),
+            TvScreen.Card("Dizüstü-Mac", "192.0.2.11:7601", TvScreen.CardState.OFFLINE),
+        )
+        return TvScreen.State(
+            screen = kind,
+            headline = if (kind == RemoteKeys.Screen.READY) "Yayına hazır" else "Yayında",
+            subline = if (kind == RemoteKeys.Screen.READY) "eşleşilen: Masaüstü-Mac" else "",
+            note = if (kind == RemoteKeys.Screen.READY) "OK seçtiğin bilgisayarı çağırır" else "",
+            pin = "123456", pinSecondsLeft = 120,
+            cards = if (kind == RemoteKeys.Screen.READY) cards else emptyList(),
+            stats = "● YAYINDA  1920x1080@60  ·  fps 59,8  ·  giriş→render 112 ms",
+            detail = "çözücü: c2.vc.h264.decoder  ·  kareler: render=12.480 düşen=0\nağ: 412.907 paket  kayıp 0  yedek 3\n",
+            showDetail = showDebug,      // MENU/INFO gerçekten katmanı açsın ki tasarım sınanabilsin
+            version = "önizleme", addresses = "192.0.2.20",
+        )
+    }
+
     private fun renderStatus() {
+        if (preview in 1..2) {
+            screen.render(previewState(if (preview == 1) RemoteKeys.Screen.READY else RemoteKeys.Screen.STREAMING))
+            return
+        }
         val local = localIpv4s()
-        val baslik = StringBuilder()
-        val alt = StringBuilder()
+        val kind = when {
+            streaming -> RemoteKeys.Screen.STREAMING
+            control.isPaired -> RemoteKeys.Screen.READY
+            else -> RemoteKeys.Screen.PAIRING
+        }
         val teknik = StringBuilder()
+        val headline: String; val subline: String; var note = statusNote
 
-        if (streaming) {
-            baslik.append("● YAYINDA  ${decoder.lastProfile}\n")
-            baslik.append("fps ${String.format("%.1f", lastFps)}  gecikme ${decoder.latencySummary()}")
-            alt.append("BACK: durdur  ·  MENU: ölçüm detayı")
-            teknik.append("çözücü: ${decoder.selectedCodecName}  giriş→render: ${decoder.latencySummary()}\n")
-            teknik.append("kareler: render=${decoder.rendered.get()} çözücüde=${decoder.inFlight()} gelen=${decoder.submitted.get()} düşen=${decoder.droppedQueueFull.get()} hata=${decoder.decodeError.get()}\n")
-            teknik.append("ağ: ${media.summary()}\n")
-            teknik.append("ses: ${audio.summary()}\n")
-            avClock?.let { teknik.append("senkron: görüntü ofseti ${it.displayOffsetMs} ms (◀ ▶ ile 10 ms)\n") }
-        } else if (control.isPaired) {
-            val es = if (control.peerName == "-") "eşleşme kayıtlı · bağlantı yok" else "eşleşili: ${control.peerName}"
-            baslik.append("HAZIR  ·  $es\n")
-            baslik.append("${computers.size} bilgisayar listeleniyor")
-            alt.append("OK: bilgisayarı seç ve yayını başlat  ·  SEARCH: yeniden tara  ·  BACK: çık (basılı tut: eşleştirmeyi sil)")
-        } else {
-            baslik.append("EŞLEŞME BEKLENİYOR\n")
-            baslik.append("bu kodu Mac'teki Pane Cast penceresine gir")
-            alt.append("SELECT: yeni PIN  ·  BACK: çık")
+        when (kind) {
+            RemoteKeys.Screen.STREAMING -> {
+                headline = "Yayında"; subline = ""
+                teknik.append("çözücü: ${decoder.selectedCodecName}  giriş→render: ${decoder.latencySummary()}\n")
+                teknik.append("kareler: render=${decoder.rendered.get()} çözücüde=${decoder.inFlight()} "
+                    + "gelen=${decoder.submitted.get()} düşen=${decoder.droppedQueueFull.get()} "
+                    + "hata=${decoder.decodeError.get()}\n")
+                teknik.append("ağ: ${media.summary()}\nses: ${audio.summary()}\n")
+                avClock?.let { teknik.append("senkron: görüntü ofseti ${it.displayOffsetMs} ms (◀ ▶ ile 10 ms)\n") }
+            }
+            RemoteKeys.Screen.READY -> {
+                headline = if (computers.isEmpty()) "Mac aranıyor" else "Yayına hazır"
+                subline = if (control.peerName == "-") "eşleşme kayıtlı · bağlantı bekleniyor"
+                          else "eşleşilen: ${control.peerName}"
+                if (computers.isEmpty() && note.isEmpty()) note = "SEARCH ile yeniden ara · Mac'te bu TV'yi seçersen akış oradan da başlar"
+                teknik.append("eşleşme: ${control.peerName}  ·  kontrol tcp/${Protocol.CONTROL_PORT}  "
+                    + "medya udp/${Protocol.MEDIA_PORT}\n")
+                teknik.append("BACK tuşuna BASILI TUT: eşleşmeyi sil (onay sorulur)\n")
+            }
+            RemoteKeys.Screen.PAIRING -> {
+                headline = "Eşleşme bekleniyor"
+                subline = "bu kodu Mac'teki Pane Cast penceresine gir"
+                if (pinLock > 0) note = "Çok fazla hatalı deneme · $pinLock sn sonra yeniden"
+                teknik.append("kod ${pinLeft} sn geçerli · OK: yeni kod\n")
+            }
         }
-        if (!streaming) {
-            teknik.append("Pane Cast ${packageInfoVersion()}  ·  IP ${local.ifEmpty { listOf("(yok)") }.joinToString(", ")}\n")
-            teknik.append("kontrol tcp/${Protocol.CONTROL_PORT}  medya udp/${Protocol.MEDIA_PORT}  mDNS ${Protocol.SERVICE_TYPE}\n")
-        }
-        if (statusNote.isNotEmpty()) alt.append("\n").append(statusNote)
+        teknik.append("Pane Cast ${packageInfoVersion()}  ·  IP ${local.ifEmpty { listOf("(yok)") }.joinToString(", ")}\n")
+        teknik.append("mDNS ${Protocol.SERVICE_TYPE}\n")
 
-        // Kullanıcı isteği: yayındayken ekranın üstünde metin katmanı olmasın — temiz görüntü.
-        // Ölçüm gerektiğinde MENU ile teknik katman açılır.
-        headerText.visibility = if (streaming && !showDebug) android.view.View.GONE else android.view.View.VISIBLE
-        statusText.visibility = if (streaming && !showDebug) android.view.View.GONE else android.view.View.VISIBLE
-        headerText.text = baslik.toString()
-        statusText.text = alt.toString()
-        debugText.text = teknik.toString()
-        debugText.visibility = if (showDebug) android.view.View.VISIBLE else android.view.View.GONE
-        updatePanels()
+        screen.render(
+            TvScreen.State(
+                screen = kind,
+                headline = headline,
+                subline = subline,
+                note = note,
+                pin = currentPin ?: "······",
+                pinSecondsLeft = pinLeft,
+                cards = computers.map { c ->
+                    TvScreen.Card(
+                        name = c.name.removePrefix("ATVM-").replace('_', ' '),
+                        detail = "${c.address}:${c.port}",
+                        state = if (resuming) TvScreen.CardState.BUSY else TvScreen.CardState.READY)
+                },
+                stats = if (streaming) "● YAYINDA  ${decoder.lastProfile}  ·  "
+                        + "fps ${String.format("%.1f", lastFps)}  ·  ${decoder.latencySummary()}" else "",
+                detail = teknik.toString(),
+                showDetail = showDebug,
+                version = packageInfoVersion(),
+                addresses = local.joinToString(", "),
+            )
+        )
     }
 
     private fun packageInfoVersion(): String = try {
@@ -579,58 +507,82 @@ class MainActivity : Activity(), ControlLink.Listener {
             .show()
     }
 
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        when (keyCode) {
-            KeyEvent.KEYCODE_BACK -> {
-                if (unpairDialog?.isShowing == true) return super.onKeyDown(keyCode, event)
-                if (streaming) { stopStream("kullanıcı DURDUR"); return true }
-                if (control.isPaired) {
-                    event.startTracking()      // uzun basış onKeyLongPress'e düşer
-                    return true
-                }
-                return super.onKeyDown(keyCode, event)
+    /**
+     * Kumanda girdisinin tek yolu.
+     *
+     * Neden `onKeyDown` değil de `dispatchKeyEvent`: TV'de odak bir kartta değilken de
+     * (yayın sırasında, PIN ekranında, liste boşken) tuşların çalışması gerekir — "global"
+     * olan bu. Öte yandan ◀▶▲▼ ve odaklı kartın SELECT'i framework'e kalmalı: odak araması
+     * ve tıklama Android TV'nin standart yoludur, kendimiz yazmayız.
+     *
+     * Kural: `RemoteKeys` PASS derse (ses, kanal, güç, CEC, gezinme, odaklıyken SELECT)
+     * `super`e bırakılır. Eylemler yalnız ACTION_DOWN'da ve `repeatCount == 0` iken koşar:
+     * tuşu basılı tutmak iki kez "yayın başlat" üretemez.
+     */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val cmd = RemoteKeys.command(event.keyCode, event.repeatCount, event.isLongPress)
+        if (cmd == RemoteKeys.Command.PASS || cmd == RemoteKeys.Command.UNKNOWN) {
+            return super.dispatchKeyEvent(event)
+        }
+        // Odakta kart varsa SELECT framework'ün tıklamasına ait (çift tetikleme olmasın).
+        if (cmd == RemoteKeys.Command.SELECT && !streaming && control.isPaired && computers.isNotEmpty()) {
+            return super.dispatchKeyEvent(event)
+        }
+        // Hata-ayıklama sürümünde tek satır tuş izi: kumanda sorunu "tuş mu gelmiyor,
+        // biz mi işlemiyoruz" ayrımı cihaz başında olmadan çözülebilsin.
+        if (isDebugBuild && event.action == KeyEvent.ACTION_DOWN && !RemoteKeys.isNavigation(cmd)) {
+            Log.i(TAG, "tuş " + event.keyCode + " → " + cmd + " (tekrar " + event.repeatCount + ")")
+        }
+        screen.wakeStats()
+        if (event.action != KeyEvent.ACTION_DOWN) {
+            if (cmd == RemoteKeys.Command.BACK) return true
+            return super.dispatchKeyEvent(event)
+        }
+        when (cmd) {
+            RemoteKeys.Command.BACK -> {
+                event.startTracking()
+                if (unpairDialog?.isShowing == true) return super.dispatchKeyEvent(event)
+                if (event.isLongPress && !streaming && control.isPaired) { confirmUnpair(); return true }
+                return true                     // karar ACTION_UP'ta: kısa = durdur/çık
             }
-            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
-                if (!streaming) {
-                    if (control.isPaired) { startFromSelectedDevice(deviceList.checkedItemPosition.coerceAtLeast(0)) }
-                    else { control.displayPin(force = true); renderStatus() }
-                    return true
-                }
+            RemoteKeys.Command.SELECT -> when {
+                streaming -> Unit
+                control.isPaired && computers.isEmpty() -> rescan("liste boş — yeniden aranıyor")
+                else -> { control.displayPin(force = true); renderStatus() }
             }
-            KeyEvent.KEYCODE_MENU -> { showDebug = !showDebug; renderStatus(); return true }
-            // İnsan kalibrasyonu (flaş/bip klibiyle): panelin görüntüye eklediği gecikme ölçülemiyor.
-            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
+            RemoteKeys.Command.MENU, RemoteKeys.Command.DETAIL -> { showDebug = !showDebug; renderStatus() }
+            RemoteKeys.Command.SEARCH -> rescan("yeniden taranıyor…")
+            RemoteKeys.Command.STOP, RemoteKeys.Command.PLAY_PAUSE ->
+                if (streaming) stopStream("kumanda")
+                else if (!control.isPaired) { control.displayPin(force = true); renderStatus() }
+            RemoteKeys.Command.NAV_LEFT, RemoteKeys.Command.NAV_RIGHT -> {
+                // Yayında ◀ ▶ senkron kalibrasyonudur (insan kulağı/flaş klibi ile ölçülüyor).
                 val c = avClock
                 if (streaming && c != null) {
-                    c.displayOffsetMs += if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) 10 else -10
+                    c.displayOffsetMs += if (cmd == RemoteKeys.Command.NAV_RIGHT) 10 else -10
                     Log.i(TAG, "görüntü ofseti ${c.displayOffsetMs} ms")
-                    renderStatus(); return true
-                }
+                    renderStatus()
+                } else return super.dispatchKeyEvent(event)
             }
-            KeyEvent.KEYCODE_SEARCH -> {
-                browser?.stop(); browser?.start(); renderNote("yeniden taranıyor…"); return true
-            }
+            else -> return super.dispatchKeyEvent(event)
         }
-        return super.onKeyDown(keyCode, event)
+        return true
     }
 
-    /// BACK'a basılı tutulunca eşleşme silme onayı sorulur.
-    override fun onKeyLongPress(keyCode: Int, event: KeyEvent): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_BACK && !streaming && control.isPaired && unpairDialog?.isShowing != true) {
-            confirmUnpair()
-            return true
-        }
-        return super.onKeyLongPress(keyCode, event)
-    }
-
-    /// Kısa BACK uygulamadan çıkar; uzun basış eşleşme silme onayı sorar (onKeyLongPress).
+    /// Kısa BACK: yayını durdurur ya da çıkarır. Uzun basış eşleşme silme onayını açar.
     /// Çıkış onDestroy'i çalıştırır: mDNS kaydı, soketler, çözücü ve ses hattı serbest kalır.
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_BACK && !streaming && unpairDialog?.isShowing != true) {
-            if (!event.isLongPress) finish()
+        if (RemoteKeys.command(keyCode, event.repeatCount, event.isLongPress) == RemoteKeys.Command.BACK) {
+            if (unpairDialog?.isShowing == true) return super.onKeyUp(keyCode, event)
+            if (event.isLongPress) return true
+            if (streaming) stopStream("kullanıcı DURDUR") else finish()
             return true
         }
         return super.onKeyUp(keyCode, event)
+    }
+
+    private fun rescan(why: String) {
+        browser?.stop(); browser?.start(); renderNote(why)
     }
 
     // ---- mDNS yayını (Mac'in TV'yi port/sabit IP girmeden bulması için) ----
@@ -679,24 +631,20 @@ class MainActivity : Activity(), ControlLink.Listener {
         }.start()
     }
 
-    private fun renderNote(t: String) { statusNote = t; renderStatus() }
+    /** Geçici satıraltı not: 8 sn sonra kendiliğinden söner (kalıcı durum sanılmasın). */
+    private var clearNote: Runnable? = null
+
+    private fun renderNote(t: String) {
+        statusNote = t
+        renderStatus()
+        clearNote?.let { ui.removeCallbacks(it) }
+        clearNote = Runnable {
+            if (statusNote == t) { statusNote = ""; renderStatus() }
+        }.also { ui.postDelayed(it, 8_000) }
+    }
+
     private var statusNote: String = ""
 
-    /** Hangi panelin görüneceği: eşleşme yoksa PIN, eşleşme varsa bilgisayar listesi. */
-    private fun updatePanels() {
-        if (streaming) {
-            devicePanel.visibility = android.view.View.GONE
-            return
-        }
-        if (control.isPaired) {
-            pinPanel.visibility = android.view.View.GONE
-            devicePanel.visibility = android.view.View.VISIBLE
-            devicePanel.requestFocus()
-        } else {
-            devicePanel.visibility = android.view.View.GONE
-            if (currentPin != null) pinPanel.visibility = android.view.View.VISIBLE
-        }
-    }
 
     override fun onDestroy() {
         super.onDestroy()
