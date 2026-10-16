@@ -120,8 +120,10 @@ class MainActivity : Activity(), ControlLink.Listener {
             })
         }
         // Yalnız hata-ayıklama sürümünde çalışan önizleme bağlantısı: READY ve YAYINDA
-        // ekranlarının tasarımı, gerçek eşleşme/ağ olmadan da ekranda görülebilsin
+        // ekranlarının tasarımı, gerçek eşleşme/ağ olmadan da ekranda görünebilsin
         // (emülatör/cihazda `am start --ei preview 1|2`). Sürüm derlemesinde bayrak yok.
+        // `singleTask` olduğu için koşan örnek yeniden kullanılır ve onCreate bir daha koşmaz:
+        // önizlemeyi değiştirmeden önce `am force-stop app.panecast.receiver` gerekir.
         preview = if (isDebugBuild) intent?.getIntExtra("preview", 0) ?: 0 else 0
         screen = TvScreen(this, ui)
         // Kart seçimi = OK: framework odak araması ◀▶▲▼'yi kendisi yönetir.

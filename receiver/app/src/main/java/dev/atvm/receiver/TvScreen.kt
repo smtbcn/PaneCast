@@ -229,7 +229,11 @@ class TvScreen(private val context: Context, private val ui: Handler) {
         lastScreen = s.screen
 
         detailBox.text = s.detail
-        detailBox.visibility = if (s.showDetail) View.VISIBLE else View.GONE
+        // Eşleşme ekranında ayrıntı katmanı çizilmez: Ölçülen kusur (yayın öncesi incelemede
+        // bulundu), sağ alt köşedeki kutu PIN kartının alt kenarına biniyordu. Kutunun
+        // söyleyeceği zaten ekranda duruyor (kodun süresi kartın içinde, sürüm + adres üst
+        // şeritte), hazır/yayın durumlarında ise çözücü ve ağ ölçümleri gerekir — orada kalır.
+        detailBox.visibility = if (s.showDetail && s.screen != RemoteKeys.Screen.PAIRING) View.VISIBLE else View.GONE
 
         noteLine.text = s.note
         noteLine.setTextColor(if (s.noteIsError) 0xFFFF6B6B.toInt() else 0xFFFFC46B.toInt())
