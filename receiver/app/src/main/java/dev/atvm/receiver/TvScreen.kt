@@ -232,7 +232,9 @@ class TvScreen(private val context: Context, private val ui: Handler) {
         cardRow.visibility = if (s.screen == RemoteKeys.Screen.READY && s.cards.isNotEmpty()) View.VISIBLE else View.GONE
 
         if (streaming) {
-            statsStrip.text = s.stats
+            // Yayında üst şerit kaybolduğunda sürüm yine okunabilsin: tuşa her basışta
+            // şerit geri gelir ve sonunda sürüm etiketi de taşır.
+            statsStrip.text = "${s.stats}  ·  ${s.version}"
             statsStrip.background = round(0xCC060A12.toInt(), 18, 0x33FFFFFF.toInt(), 1)
             // Yalnızca yayına yeni geçildiğinde göster ve saymayı başlat: renderStatus
             // her saniye koştuğu için burada her seferinde zamanlansaydı şerit hiç

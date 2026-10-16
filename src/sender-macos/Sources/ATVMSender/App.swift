@@ -367,6 +367,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
                           backing: .buffered, defer: false)
         window.title = "Pane Cast"
+        // Sürüm başlık çubuğunda: hangi kopyanın koştuğu tek bakışta görünsün
+        // (izin de imzaya bağlı olduğundan "yanlış kopya" sorusu buradan cevaplanıyor).
+        window.subtitle = BuildInfo.tag
         window.contentView = content
         // Gövde artık kaydırılabiliyor: pencere alt sınırı ızgaranın alt sınırından küçük olabilir,
         // böylece küçük ekranda dikey + yatay çubuklar gerçekten çıkar (kullanıcı isteği).
@@ -498,7 +501,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             measured = "ölçüm yok — yayın değil"
         }
         let status = "\(statusText.stringValue) · \(channel) · \(measured)"
-        let counts = "Özet: \(dashboard.summaryText) · \(events.groupCount) grup · \(events.lineCount) olay satırı"
+        let counts = "Özet: \(dashboard.summaryText) · \(events.groupCount) grup · \(events.lineCount) olay satırı · \(BuildInfo.tag)"
         eventsPage.openLog.toolTip = "Ham günlük: \(logFile.path)"
         eventsPage.show(rows: events.rows, status: status, counts: counts,
                         tone: dashboard.summaryTone, resetScroll: resetScroll)
