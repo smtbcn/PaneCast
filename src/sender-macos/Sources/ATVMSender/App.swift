@@ -818,7 +818,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         engine.setHost(host)
         refreshRunButton()
         let what: String
-        if case .window(let win) = source { what = "\(win.app) — \(win.title)" } else { what = TvDisplay.name }
+        if case .window(let win) = source { what = win.displayName } else { what = TvDisplay.name }
         log("hedef: \(host) ← \(what) · profil \(profile.width)x\(profile.height)@\(profile.fps)")
         do {
             let hs = try await engine.connectAndHello(host: host)
@@ -1029,7 +1029,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         switching = true
         Task { @MainActor [weak self] in
             defer { self?.switching = false }
-            log("izlenen pencere listeden düştü → aynı uygulamanın penceresine geçiliyor: \(twin.app) — \(twin.title)")
+            log("izlenen pencere listeden düştü → aynı uygulamanın penceresine geçiliyor: \(twin.displayName)")
             do { try await self?.engine.switchWindow(twin) }
             catch { log("geçiş başarısız: \(error)") }
         }
@@ -1066,7 +1066,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         if tvDisplayMode {
             source = "TV ekranı (ayrı ekran)"
         } else if let win = shown[safe: windowTable.selectedRow] {
-            source = "\(win.app) — \(win.title)"
+            source = win.displayName
         } else {
             source = "pencere seçilmedi"
             sourceState = .warn
@@ -1295,7 +1295,10 @@ final class WindowCell: NSTableCellView {
         icon.imageScaling = .scaleProportionallyDown
         icon.translatesAutoresizingMaskIntoConstraints = false
         primary.font = NSFont.systemFont(ofSize: 12, weight: .medium)
-        primary.lineBreakMode = .byTruncatingHead
+        // Ölçülen kusur: `byTruncatingHead` uzun tarayıcı başlığında **uygulama adını**
+        // tamamen yutuyordu ("…in En Etkileyici Mağaralarından…"). Ortadan kesme hem
+        // uygulama adını hem belgenin/site adının sonunu korur.
+        primary.lineBreakMode = .byTruncatingMiddle
         primary.translatesAutoresizingMaskIntoConstraints = false
         secondary.font = NSFont.systemFont(ofSize: 10)
         secondary.textColor = .secondaryLabelColor
@@ -1326,13 +1329,15 @@ final class WindowCell: NSTableCellView {
     }
 
     func fill(w: WindowInfo, streaming: Bool) {
-        primary.stringValue = "\(w.app) — \(w.title)"
+        primary.stringValue = w.displayName
         let boyut = "\(Int(w.frame.width))×\(Int(w.frame.height))"
         secondary.stringValue = streaming ? "● YAYINDA · \(boyut)" : boyut
         secondary.textColor = streaming ? .controlAccentColor : .secondaryLabelColor
         icon.image = NSWorkspace.shared.runningApplications
             .first { $0.localizedName == w.app }?.icon
             ?? NSImage(named: NSImage.multipleDocumentsName)
+        // İpucu ham başlığı saklar: satır kırpıldığında veya sayaç/gürültü atıldığında
+        // tam metne ulaşmak mümkün kalsın.
         toolTip = "\(w.app)\n\(w.title)\n\(boyut)"
     }
 }

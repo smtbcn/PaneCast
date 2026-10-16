@@ -251,7 +251,7 @@ final class MirrorEngine {
         self.appliedPixels = pixels
         self.pipelineGeneration += 1
         if let window {
-            log("yakalama başladı: \(window.app) — \(window.title)")
+            log("yakalama başladı: \(window.displayName)")
             startResizeWatcher()
         } else {
             log("yakalama başladı: \(TvDisplay.name) (displayID \(tvDisplay!.displayID))")
@@ -287,7 +287,7 @@ final class MirrorEngine {
             try await runPipeline(source: .window(window), profile: profile, host: host,
                                   mediaPort: port, announce: announce)
             tvDisplay = nil
-            log("yayın penceresi değişti → \(window.app) — \(window.title)")
+            log("yayın penceresi değişti → \(window.displayName)")
         } catch {
             // Ölçülen kusur: yeni pencere kurulamazsa yayın ölü kalıyordu.
             // Eski pencereye dön, kullanıcı en azından izlemeye devam etsin.

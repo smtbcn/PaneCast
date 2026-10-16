@@ -11,6 +11,8 @@ struct WindowInfo: Identifiable, CustomStringConvertible {    let id: UInt32
     let title: String
     let frame: CGRect
     let onScreen: Bool
+    /// Listede/rozetlerde/günlükte görünen ad: `Uygulama — içerik` (bkz. WindowNaming).
+    var displayName: String { WindowNaming.rowText(app: app, title: title) }
     var description: String {
         "id=\(id) app=\(app) title=\"\(title)\" frame=\(frame.integral) onScreen=\(onScreen)"
     }
