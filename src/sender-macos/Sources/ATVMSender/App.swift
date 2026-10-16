@@ -1239,15 +1239,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     /// Ölçülen kusur: geliştirme kopyası (`artifacts/build`) ile kurulu kopya aynı anda
     /// kayıtlıyken Ekran Kaydı izni hangisine verildi şaşıyor, TV'nin geri kanalı (7610) ve
     /// yoklama kanalı (7611) çakışıyor; kullanıcı "verdiğim izni okumuyor" durumuna düşüyordu.
+    /// Kaç kopya var ve hangisi koşuyor — izin tekrarının gerçek kaynağı buradan okunsun.
+    ///
+    /// İki ölçülen tuzak: (1) LaunchServices kayıtları bağlı olmayan DMG bağlama
+    /// noktalarını ve silinmiş geçici kopyaları da listeliyor (ölçüldü: 19 kayıt, diskte
+    /// yalnız 4'ü vardı) — sayan kişi sahte "kopya" uyarısı görüyordu. (2) Ekran Kaydı
+    /// izni paket kimliği + **imza gereksinimiyle** hatırlanıyor; farklı sertifika ile
+    /// imzalanmış bir kopya macOS'a göre yabancı uygulamadır ve izni yeniden sorar.
     private func warnAboutCopies() {
         guard let id = Bundle.main.bundleIdentifier else { return }
-        let paths = NSWorkspace.shared.urlsForApplications(withBundleIdentifier: id).map(\.path)
-        if paths.count > 1 {
-            note("\(paths.count) Pane Cast kopyası kayıtlı — izin ve TV kanalları karışır. Tek kopyayı kullan; diğerini klasörden çıkar.", .warn)
+        let here = Bundle.main.bundlePath
+        let live = NSWorkspace.shared.urlsForApplications(withBundleIdentifier: id)
+            .map(\.path).filter { FileManager.default.fileExists(atPath: $0) }.sorted()
+        if live.count > 1 {
+            note("\(live.count) Pane Cast kopyası diskte duruyor — TV kanalları ve izinler "
+                + "karışır. İzin imzayı izler: /Applications'dakini kullan, diğerini çıkar. "
+                + "Şu an koşan: \(here)", .warn)
+        } else if live.first != here {
+            note("Koşan kopya kurulu uygulama değil: \(here) — kurulu olanı açarsan ekran kaydı "
+                + "izni hazır gelir.", .warn)
         }
         // Koşan ikinci örnek artık mümkün değil: InstanceGuard servisi açılışta tek örnek
-        // kilitlerini denetler ve ikinci örneği kapatır. Burada kalan denetim diskteki
-        // kayıtlı kopyalar (izinlerin hangisine verildiği karışabiliyordu).
+        // kilitlerini denetler ve ikinci örneği kapatır.
     }
 
     // ---------- diyaloglar ----------

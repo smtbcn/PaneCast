@@ -13,9 +13,12 @@
 #
 # Signing identity, first match wins (the certificate name is personal, never committed):
 #   1) PANECAST_SIGN_IDENTITY environment variable
-#   2) IDENTITY in scripts/signing.local.sh (gitignored; see signing.local.sh.example)
-#   3) ad-hoc ("-"): the signature changes on every build, so macOS forgets the Screen
-#      Recording grant each time. Use a real Apple Development identity for day-to-day work.
+#   2) RELEASE_IDENTITY in scripts/signing.local.sh — the Developer ID the shipped app uses.
+#      Day-to-day builds must carry it: macOS remembers Screen Recording per bundle id +
+#      signature requirement, so a differently signed test copy is a stranger and re-asks.
+#   3) IDENTITY in scripts/signing.local.sh (Apple Development) — works, but macOS will ask
+#      for the permission again for that copy.
+#   4) ad-hoc ("-"): the signature changes on every build, so the grant is lost every time.
 # PANECAST_TIMESTAMP=1 adds a secure timestamp (required for notarization; needs network).
 set -euo pipefail
 
@@ -46,9 +49,16 @@ IDENTITY="${PANECAST_SIGN_IDENTITY:-}"
 if [[ -z "$IDENTITY" && -f "$ROOT/scripts/signing.local.sh" ]]; then
   # shellcheck source=/dev/null
   source "$ROOT/scripts/signing.local.sh"
-  IDENTITY="${IDENTITY:-}"
+  # Gündelik derleme YAYINLANAN uygulamayla aynı imza gereksinimini taşımalı: macOS'un
+  # Ekran Kaydı izni paket kimliği + imzaya bağlı olarak hatırlanıyor. Apple Development
+  # ile imzalı bir test kopyası macOS'a göre başkasıdır ve her açılışta izin yeniden sorulur.
+  IDENTITY="${RELEASE_IDENTITY:-${IDENTITY:-}}"
 fi
-IDENTITY="${IDENTITY:--}"
+if [[ -z "$IDENTITY" ]]; then
+  IDENTITY="-"
+  echo "uyarı: Developer ID kimliği bulunamadı, kabaca (ad-hoc) imzalanıyor —" \
+       "macOS her açılışta ekran kaydı iznini yeniden soracak." >&2
+fi
 
 ARCH_FLAGS=()
 if [[ "$UNIVERSAL" == 1 ]]; then
