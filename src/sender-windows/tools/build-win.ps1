@@ -7,7 +7,8 @@
 #   örn: build-win.ps1 pairingVectors tools/pairingVectors.cpp src/Crypto.cpp src/Pairing.cpp
 param(
     [Parameter(Mandatory = $true)][string]$Name,
-    [Parameter(Mandatory = $true, ValueFromRemainingArguments = $true)][string[]]$Sources
+    [Parameter(Mandatory = $true)][string[]]$Sources,
+    [string]$Libs = 'bcrypt.lib crypt32.lib'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -26,22 +27,28 @@ Set-Location $out
 # Bayat exe testi yanıltır: derleme başarısızsa eski haliyle koşabilir (ölçüldü).
 Remove-Item (Join-Path $out "$Name.exe") -ErrorAction SilentlyContinue
 
-# Kitap listesi parametre olarak DEĞİL ortamdan gelıyor: `-File` konumsal bağlamada
-# ValueFromRemainingArguments ile ikinci parametre çakışıyor (ölçüldü: ilk kaynak /link
-# sonrasına düşüyordu).
-$libs = if ($env:PANECAST_LIBS) { $env:PANECAST_LIBS -split ' ' } else { @('bcrypt.lib', 'crypt32.lib') }
+# Kitap listesi `-Libs` ile gelir; `-File` konumsal bağlamada ikinci parametre ilk kaynağı
+# yutuyordu (ölçüldü) — bu yüzden çağıran adlandırılmış parametre kullanmak zorunda.
+$libs = $Libs -split ' '
 $clArgs = @('/nologo', '/std:c++17', '/EHsc', '/utf-8', '/W4')
-foreach ($s in $Sources) { $clArgs += (Join-Path $src ($s -replace '/', '\')) }
+# `-File` ile virgülle geçen liste TEK dize olarak gelir (diziye ayrılmaz — ölçüldü); burada bölüyoruz.
+$files = @($Sources | ForEach-Object { $_ -split ',' } | Where-Object { $_ -ne '' })
+foreach ($s in $files) { $clArgs += (Join-Path $src ($s -replace '/', '\')) }
 $clArgs += @('/Fe:' + (Join-Path $out "$Name.exe"))
 $clArgs += '/link'
 $clArgs += $libs
 
 Write-Output ('CL=' + ($clArgs -join ' '))
+# Argümanlar PowerShell'den `cl`ye tek tek geçilse de link'e `/link` sonrası toplu gidiyordu
+# (ölçüldü: LNK1181 'bcrypt.lib crypt32.lib ws2_32.lib' tek dosya olarak aranıyor).
+# MSVC'nin kendi yanıt dosyası kullanılıyor: her satır bir argüman, alıntı sorunu yok.
+$rsp = Join-Path $out "$Name.rsp"
+Set-Content -Path $rsp -Value ($clArgs -join "`r`n") -Encoding Ascii
 # cl banner'ı stderr'e yazıyor; PowerShell onu hat kaydı yapar. Derlemeyi duraklatmamak için
 # hata tercihi geçici olarak bırakılır ve çıktı düz metin olarak toplanır.
 $ErrorActionPreference = 'Continue'
 $log = Join-Path $out "$Name.build.log"
-& cl @clArgs 2>&1 | ForEach-Object { "$_" } | Out-File -Encoding utf8 $log
+& cl "@$rsp" 2>&1 | ForEach-Object { "$_" } | Out-File -Encoding utf8 $log
 if (-not (Test-Path (Join-Path $out "$Name.exe"))) {
     Write-Output 'SONUC=derleme_basarisiz'
     Get-Content $log | Select-Object -First 25
