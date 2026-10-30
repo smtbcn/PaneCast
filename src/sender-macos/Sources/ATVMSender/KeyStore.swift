@@ -5,6 +5,35 @@ import Security
 /// servis = uygulama paketi kimliği, hesap = TV'nin IPv4 adresi, değer = 32 bayt anahtar.
 /// Önceki sürümün düz dosyası (`paired_keys.json`, base64) ilk erişimde buraya taşınır ve silinir.
 /// TV adları sır değildir; arayüz listesi için `paired_names.json` içinde kalır.
+/// Bu yayıncının kalıcı kimliği (docs/protocol.md §3.4).
+/// 12 rastgele bayt, padding'siz base64url → tam 16 karakter, dosya adına güvenli.
+/// Ana makine adından/MAC'ten/IP'den TÜRETİLMEZ: ilişkilendirme tutamacı başka bir kimliği
+/// yanında taşırsa kişisel veri sızıntısı olur; TV için önemsiz, çünkü yetkilendirme bu
+/// etikete değil kanıta bakıyor (§3.3).
+enum DeviceID {
+    /// 12 bayt → padding'siz base64url: tam 16 karakter ve yalnız `[A-Za-z0-9-_]`.
+    /// TV bu etiketi dosya adı yapıyor (§3.4), o yüzden kaçış değil **küme** denetimi gerekiyor:
+    /// `+`/`/`/`=` üreten bir base64 çıktısı alıcıda "kimlik yok" sayılırdı.
+    static func encode(_ raw: Data) -> String {
+        raw.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    static let current: String = {
+        if let saved = KeyStore.readDeviceId() { return saved }
+        var bytes = [UInt8](repeating: 0, count: 12)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+            // CSPRNG başarısız olursa kimlik uydurma: eşleşme yazmak yerine hiç id gönderme.
+            return ""
+        }
+        let id = encode(Data(bytes))
+        KeyStore.storeDeviceId(id)
+        return id
+    }()
+}
+
 enum KeyStore {
     /// build-sender-app.sh'deki CFBundleIdentifier ile aynı. Sabit tutulur: paketsiz koşan CLI
     /// (`swift build` çıktısı) ile .app aynı kaydı görsün.
@@ -81,6 +110,33 @@ enum KeyStore {
         [kSecClass as String: kSecClassGenericPassword,
          kSecAttrService as String: service,
          kSecAttrAccount as String: host]
+    }
+
+    // ---------- kendi kimliğimiz (hesap: self.device_id) ----------
+
+    private static let deviceIdAccount = "self.device_id"
+
+    static func readDeviceId() -> String? {
+        _ = migrated
+        var q = query(deviceIdAccount)
+        q[kSecReturnData as String] = true
+        q[kSecMatchLimit as String] = kSecMatchLimitOne
+        var out: CFTypeRef?
+        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess,
+              let data = out as? Data, data.count == 16 else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    static func storeDeviceId(_ id: String) {
+        _ = migrated
+        guard let data = id.data(using: .utf8) else { return }
+        let status = SecItemUpdate(query(deviceIdAccount) as CFDictionary,
+                                   [kSecValueData as String: data] as CFDictionary)
+        guard status == errSecItemNotFound else { return }
+        var add = query(deviceIdAccount)
+        add[kSecValueData as String] = data
+        add[kSecAttrLabel as String] = "Pane Cast yayıncı kimliği"
+        _ = SecItemAdd(add as CFDictionary, nil)
     }
 
     private static func write(host: String, key: Data) -> OSStatus {

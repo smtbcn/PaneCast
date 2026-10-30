@@ -69,7 +69,8 @@
     <string name="deny_no_window">"No window is selected on the Mac for broadcasting — pick one in the Mac app, then OK"</string>
     <string name="deny_not_paired">"The Mac does not see this TV as paired — enter the TV's code into the Mac again"</string>
     <string name="deny_auth_failed">"The Mac could not verify the pairing key — forget the pairing and pair again"</string>
-    <string name="deny_code_used">"This code was already used — press OK for a new code"</string>
+    <string name="deny_already_paired">"This computer is already paired with this TV — to pair it again, delete the pairing on the TV first"</string>
+    <string name="deny_no_slot">"This TV already remembers the maximum number of computers — delete one on the TV, then pair again"</string>
     <string name="deny_code_expired">"The code has expired — press OK for a new code"</string>
     <string name="deny_locked">"Too many incorrect attempts — wait a moment and try again"</string>
     <string name="deny_version">"The Mac and the TV versions do not match — update both sides"</string>

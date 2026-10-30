@@ -134,8 +134,12 @@ final class ControlClient: @unchecked Sendable {
     enum Handshake { case paired, needsPin }
 
     /// hello gönderir; TV ya zaten eşleşmiş (karşılıklı kanıt otomatik) ya da PIN ister.
+    /// `device_id` (§3.4) TV'nin iki bilgisayarı ayırt etmesi için: yetkilendirme bundan
+    /// gelmiyor, kanıt hangi kayıtlı anahtarla tutuyorsa o bilgisayar odur (§3.3).
     func beginHello() async throws -> Handshake {
-        try await send(["t": "hello", "name": HostName.current, "ver": PairingCrypto.version])
+        var hello: [String: Any] = ["t": "hello", "name": HostName.current, "ver": PairingCrypto.version]
+        if !DeviceID.current.isEmpty { hello["device_id"] = DeviceID.current }
+        try await sendObject(hello)
         let first = try await expectAny(timeout: 8)
         let t = first["t"] as? String
         // v1 TV sürüm alanı göndermiyordu; yeni mesajlarımızı tanımayıp sessiz kalırdı.

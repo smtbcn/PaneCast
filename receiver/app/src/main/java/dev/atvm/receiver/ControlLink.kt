@@ -45,7 +45,13 @@ class ControlLink(storageDir: File, private val listener: Listener) {
     @Volatile private var authed = false
     @Volatile var peerName: String = "-"
         private set
+    /** Doğrulanmış oturumun kaydı: silme gibi yıkıcı işler asla ağdan gelen iddia ile değil,
+     *  bu kimlikle yapılır (§3.3). */
+    @Volatile private var authedPeerId: String? = null
     val isPaired: Boolean get() = pairing.paired
+
+    /** Ekranda kod göstermenin anlamı var mı: hâlâ eşleşebilecek bilgisayar yeri var. */
+    fun wantsPin(): Boolean = pairing.hasFreeSlot
 
     fun start() {
         if (running.get()) return
@@ -108,21 +114,42 @@ class ControlLink(storageDir: File, private val listener: Listener) {
         }
     }
 
-    fun forgetPairing() {
-        pairing.clear()
+    /** `unpair` mesajının kapsamı: bu oturumda kanıtı doğrulanan **tek** bilgisayarın kaydı.
+     *  Kapsam ağdan gelen `unpair.id` iddiasından değil, doğrulanmış kayıttan gelir (§3.3);
+     *  idsiz eski yayıncı da kendi (legacy) kaydını siler, diğer bilgisayarlar eşleşik kalır. */
+    private fun forgetPairing() {
+        pairing.remove(authedPeerId)
+        authedPeerId = null
+        displayPin(force = true)
+    }
+
+    /** Kumandadaki "eşleştirmeyi sil" bir insan kararıdır: tüm bilgisayarların kaydı düşer. */
+    fun forgetAllPairings() {
+        pairing.clearAll()
         displayPin(force = true)
     }
 
     /** Uygulama açılır açılmaz ekranda bir kod görünmesi için (kullanıcı geribildirimi).
-     *  force=true → yeni kod üretir (kumanda ile "yeni PIN" isteği). */
+     *  force=true → yeni kod üretir (kumanda ile "yeni PIN" isteği).
+     *  Tablo doluysa kod göstermek boş vaat: eşleşmek isteyen bilgisayar `no_slot` görür. */
     fun displayPin(force: Boolean = false) {
-        if (pairing.paired) return
+        if (!pairing.hasFreeSlot) return
         listener.onPinShown(if (force) pairing.newPin() else pairing.pinOrNew())
     }
 
     fun pinSecondsLeft(): Int = pairing.pinSecondsLeft()
     fun lockSecondsLeft(): Int = ((pairing.lockMsLeft() + 999) / 1000).toInt()
-    fun storedSessionKey(): ByteArray? = pairing.storedSessionKey()
+
+    /** TV'nin başlattığı yönde denenecek anahtarlar: önce adı eşleşen kayıt (§3.3). */
+    fun sessionKeysFor(name: String?): List<ByteArray> =
+        pairing.sessionKeys(Pairing.Claim(null, name ?: ""))
+
+    /** Ağ yoklamasının `paired` sorusu: bu kimlik için kayıtlı anahtar var mı (§2.1). */
+    fun isPairedWith(id: String?): Boolean =
+        if (id == null) pairing.paired
+        else pairing.pairedWith(Pairing.Claim(id, ""))
+
+    fun freeSlots(): Int = (Pairing.MAX_PEERS - pairing.peers().size).coerceAtLeast(0)
 
     private fun acceptLoop() {
         var failures = 0
@@ -161,6 +188,7 @@ class ControlLink(storageDir: File, private val listener: Listener) {
     private inner class Conn(val s: Socket, val w: BufferedWriter) {
         val reader = LineReader(s.getInputStream())
         var helloSeen = false
+        var claim: Pairing.Claim? = null
         var challenge: ByteArray? = null
         var exchange: PasskeyResponder? = null
 
@@ -174,6 +202,8 @@ class ControlLink(storageDir: File, private val listener: Listener) {
                     if (helloSeen) return unexpected(t)
                     helloSeen = true
                     peerName = m.optString("name", "?")
+                    // Ağdan gelen etiket süzülmeden hiçbir yere yazılmaz (§3.4).
+                    claim = Pairing.Claim(m.optString("device_id").takeIf { it.isNotEmpty() }, peerName)
                     val ver = m.optInt("ver", 1)
                     listener.onPeerHello(peerName, ver)
                     if (ver != Protocol.VERSION) {
@@ -181,13 +211,20 @@ class ControlLink(storageDir: File, private val listener: Listener) {
                         Log.w(TAG, "farklı protokol sürümü: $peerName v$ver (beklenen v${Protocol.VERSION})")
                         return false
                     }
-                    if (pairing.paired) {
+                    // Kimliği olmayan eski yayıncı: tek kayıt dönemindeki davranışın aynısı.
+                    val known = claim?.let { if (it.id != null) pairing.pairedWith(it) else pairing.paired } == true
+                    if (known) {
                         val n = pairing.newNonce()
                         challenge = n
                         reply(Msg.T to Msg.CHALLENGE, "nonce_tv" to pairing.b64(n), "ver" to Protocol.VERSION)
                     } else {
                         val lock = pairing.lockMsLeft()
                         if (lock > 0) return locked(lock)
+                        if (!pairing.hasFreeSlot) {
+                            reply(Msg.T to Msg.DENIED, "reason" to "no_slot", "ver" to Protocol.VERSION)
+                            Log.w(TAG, "eşleşme tablosu dolu, yeni bilgisayar alınamıyor: $peerName")
+                            return false
+                        }
                         displayPin()
                         // Kullanıcı kodu Mac'e yazarken bağlantı beklesin.
                         s.soTimeout = Protocol.PIN_TTL_MS.toInt()
@@ -196,12 +233,17 @@ class ControlLink(storageDir: File, private val listener: Listener) {
                 }
                 Msg.PAIR_INIT -> {
                     if (!helloSeen || exchange != null) return unexpected(t)
-                    if (pairing.paired) {
+                    val c = claim ?: return unexpected(t)
+                    if (c.id != null && pairing.pairedWith(c)) {
+                        // already_paired artık kimlik-kapsamlı: diğer bilgisayarlar eşleşmiş durabilir.
                         reply(Msg.T to Msg.DENIED, "reason" to "already_paired"); return false
+                    }
+                    if (!pairing.hasFreeSlot) {
+                        reply(Msg.T to Msg.DENIED, "reason" to "no_slot", "ver" to Protocol.VERSION); return false
                     }
                     val lock = pairing.lockMsLeft()
                     if (lock > 0) return locked(lock)
-                    val passkey = pairing.beginAttempt() ?: run {
+                    val passkey = pairing.beginAttempt(c) ?: run {
                         displayPin(force = true)
                         reply(Msg.T to Msg.DENIED, "reason" to "pin_expired"); return false
                     }
@@ -225,8 +267,9 @@ class ControlLink(storageDir: File, private val listener: Listener) {
                     val ex = exchange ?: return unexpected(t)
                     val (key, tvMac) = ex.onConfirm(pairing.unb64(m.optString("mac")))
                     exchange = null
-                    pairing.endAttempt(key)
+                    pairing.endAttempt(key, claim)
                     authed = true
+                    authedPeerId = claim?.id
                     s.soTimeout = 0
                     val sid = PairingCrypto.fingerprint(key)
                     reply(Msg.T to Msg.PAIRED, "session" to sid, "mac" to pairing.b64(tvMac))
@@ -240,20 +283,27 @@ class ControlLink(storageDir: File, private val listener: Listener) {
                 Msg.PROOF -> {
                     val n = challenge ?: return unexpected(t)
                     challenge = null
-                    val key = pairing.storedSessionKey()
                     val nonceMac = pairing.unb64(m.optString("nonce_mac"))
                     val got = pairing.unb64(m.optString("proof"))
-                    if (key == null || nonceMac.size != PairingCrypto.NONCE_BYTES ||
-                        !MessageDigest.isEqual(PairingCrypto.sessionProof(key, "ctl", "mac", n, nonceMac), got)) {
+                    // §3.3: iddia edilen `device_id`'e güvenilmez; her kayıtlı anahtar altında
+                    // kanıt hesaplanır ve sabit-zamanlı karşılaştırılır. Eşleşen kayıt zaten uçtur.
+                    val peer = if (nonceMac.size == PairingCrypto.NONCE_BYTES)
+                        pairing.sessionPeers(claim).firstOrNull {
+                            MessageDigest.isEqual(
+                                PairingCrypto.sessionProof(it.key, "ctl", "mac", n, nonceMac), got)
+                        } else null
+                    if (peer == null) {
                         reply(Msg.T to Msg.DENIED, "reason" to "auth_failed")
                         Log.w(TAG, "oturum kanıtı doğrulanamadı: $peerName")
                         listener.onDenied("auth_failed")
                         return false
                     }
                     authed = true
+                    authedPeerId = peer.id
                     s.soTimeout = 0
-                    reply(Msg.T to Msg.READY, "session" to PairingCrypto.fingerprint(key),
-                        "proof" to pairing.b64(PairingCrypto.sessionProof(key, "ctl", "tv", n, nonceMac)))
+                    pairing.touch(peer.id)
+                    reply(Msg.T to Msg.READY, "session" to PairingCrypto.fingerprint(peer.key),
+                        "proof" to pairing.b64(PairingCrypto.sessionProof(peer.key, "ctl", "tv", n, nonceMac)))
                 }
                 Msg.START -> {
                     if (!authed) return notPaired()

@@ -34,13 +34,23 @@ object SenderConnector {
     data class Failure(val kind: ConnectFail, val detail: String = "")
 
     fun resume(hosts: List<String>, port: Int, tvName: String, tvIp: String, mediaPort: Int,
-               sessionKey: ByteArray, link: ControlLink): Failure? {
+               sessionKeys: List<ByteArray>, link: ControlLink): Failure? {
         var last = Failure(ConnectFail.unresolved)
         for (host in hosts) {
-            last = attempt(host, port, tvName, tvIp, mediaPort, sessionKey, link) ?: return null
+            // TV, aradığı makinenin hangi kayıtla eşleştiğini önceden bilmez (§3.3): anahtarlar
+            // aynı adreste sırayla denenir. Ulaşılamayan adrese dört anahtar denemek boşa iş.
+            for ((index, key) in sessionKeys.withIndex()) {
+                last = attempt(host, port, tvName, tvIp, mediaPort, key, link) ?: return null
+                if (index == 0 && !isWrongKey(last)) break
+            }
         }
         return last
     }
+
+    /** Bilgisayar bu anahtarı reddetti → aynı adreste sıradaki anahtar denenebilir. */
+    private fun isWrongKey(f: Failure): Boolean =
+        (f.kind == ConnectFail.denied && (f.detail == "auth_failed" || f.detail == "not_paired")) ||
+            f.kind == ConnectFail.identity
 
     private fun attempt(host: String, port: Int, tvName: String, tvIp: String, mediaPort: Int,
                         sessionKey: ByteArray, link: ControlLink): Failure? {

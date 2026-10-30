@@ -16,7 +16,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * ağa `find` yayını yapar; açık olan her alıcı kendi adresini tek-seferlik geri yazar.
  */
 class PresenceResponder(private val localIpv4s: () -> List<String>,
-                        private val paired: () -> Boolean) {
+                        private val paired: (String?) -> Boolean,
+                        private val freeSlots: () -> Int = { 0 }) {
     companion object {
         private const val TAG = "ATVM-Presence"
         const val PORT = 7611
@@ -90,13 +91,17 @@ class PresenceResponder(private val localIpv4s: () -> List<String>,
                 queries++
                 recordSender(text, pkt)
                 val ip = localIpv4s().firstOrNull() ?: continue
+                // `id` seçilik: eski yayıncı yazmaz, o durumda `paired` "herhangi bir kayıt var mı" demek.
+                val probeId = try { JSONObject(text).optString("id", "").takeIf { it.isNotEmpty() } }
+                    catch (e: Exception) { null }
                 val reply = JSONObject()
                     .put("t", "tv")
                     .put("name", Build.MODEL)
                     .put("ip", ip)
                     .put("cport", Protocol.CONTROL_PORT)
                     .put("mport", Protocol.MEDIA_PORT)
-                    .put("paired", paired())
+                    .put("paired", paired(probeId))
+                    .put("slot", freeSlots())
                     .toString()
                 val out = DatagramPacket(reply.toByteArray(Charsets.UTF_8), reply.length,
                     pkt.address, pkt.port)

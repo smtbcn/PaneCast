@@ -148,13 +148,85 @@ private fun lockout() {
     p.newPin()
     p.beginAttempt()
     p.endAttempt(ByteArray(32) { 7 })
-    check("başarı anahtarı kaydeder", p.paired && p.storedSessionKey()!!.contentEquals(ByteArray(32) { 7 }))
+    check("başarı anahtarı kaydeder", p.paired && p.sessionKeys().first().contentEquals(ByteArray(32) { 7 }))
     p.newPin()
     repeat(Pairing.MAX_FAILURES) { p.endAttempt(null); p.newPin() }
     check("başarı kilit süresini sıfırlar", p.lockMsLeft() == Pairing.LOCK_BASE_MS)
     now += Protocol.PIN_TTL_MS + Pairing.LOCK_BASE_MS
     check("süresi dolan kodla deneme yok", p.beginAttempt() == null)
     dir.deleteRecursively()
+}
+
+/** Yayıncı başına kayıt tablosu (docs/protocol.md §3.3-3.4): aynı TV'de iki bilgisayar. */
+private fun peersTable() {
+    val dir = File(System.getProperty("java.io.tmpdir"), "atvm-peers-${System.nanoTime()}").apply { mkdirs() }
+    var now = 2_000_000L
+    val p = Pairing(dir) { now }
+    // device_id: 16 karakterlik base64url (12 rastgele bayt).
+    val a = Pairing.Claim("AAAAAAAAAAAAAAAA", "Masaustu-A")
+    val b = Pairing.Claim("BBBBBBBBBBBBBBBB", "Dizustu-B")
+    val k1 = ByteArray(32) { 1 }
+    val k2 = ByteArray(32) { 2 }
+
+    p.newPin(); now += 1000; p.beginAttempt(a); p.endAttempt(k1, a)
+    check("ilk bilgisayar kaydedildi", p.paired && p.peers().size == 1)
+    check("ikinci bilgisayar icin bos goz var", p.hasFreeSlot)
+    check("A esleşmiş sayılır", p.pairedWith(a))
+    check("B henuz esleşmemiş", !p.pairedWith(b))
+
+    p.newPin(); now += 1000; p.beginAttempt(b); p.endAttempt(k2, b)
+    check("iki bilgisayar birlikte esleşik", p.peers().size == 2 && p.pairedWith(a) && p.pairedWith(b))
+    check("A'nin kaniti kendi anahtariyla dogrulanir", p.sessionKeys(a).first().contentEquals(k1))
+    check("B'nin kaniti kendi anahtariyla dogrulanir", p.sessionKeys(b).first().contentEquals(k2))
+    check("deneme siralamasi anahtar sayisini asamaz", p.sessionKeys(a).size == 2)
+
+    // Agdan gelen id dosya adi olur: yol ziplamasina izin verilmemeli.
+    val evil = Pairing.Claim("../../escape", "Saldirmen")
+    p.newPin(); now += 1000; p.beginAttempt(evil); p.endAttempt(ByteArray(32) { 3 }, evil)
+    check("gecersiz id ayri kimlik acmaz", p.peers().any { it.id == null })
+    val inner = File(dir, "pair_keys_v2").listFiles()?.toList() ?: emptyList()
+    check("dizin ağacında kaçak dosya yok",
+        (dir.listFiles()?.toList() ?: emptyList()).none { it.name.indexOf("escape") >= 0 } &&
+            inner.none { it.name.indexOf("escape") >= 0 } &&
+            !File(dir.parentFile, "escape.bin").exists())
+
+    val c = Pairing.Claim("CCCCCCCCCCCCCCCC", "Ucuncu-C")
+    p.newPin(); now += 1000; p.beginAttempt(c); p.endAttempt(ByteArray(32) { 4 }, c)
+    check("dort kayit dolu", p.peers().size == Pairing.MAX_PEERS && !p.hasFreeSlot)
+
+    val d = Pairing.Claim("DDDDDDDDDDDDDDDD", "Dorduncu-D")
+    p.newPin(); now += 1000; p.beginAttempt(d); p.endAttempt(ByteArray(32) { 5 }, d)
+    check("besinciden sonra tablo dortte kalir", p.peers().size == Pairing.MAX_PEERS)
+    check("en az kullanilan kayit dustu", !p.pairedWith(a) && p.pairedWith(d))
+
+    // Tek kaydi silmek digerlerine dokunmamali; idsiz silme YALNIZ kimliksiz (eski yayinci)
+    // kayidini siler — tabloyu bosaltmak insan karari olan kumanda eylemidir.
+    val removed = p.peers().first { it.id != null }
+    val before = p.peers().size
+    p.remove(removed.id)
+    check("id ile silinen kayit gitti, digerler kaldi",
+        !p.pairedWith(Pairing.Claim(removed.id!!, "")) && p.peers().size == before - 1)
+    val ided = p.peers().count { it.id != null }
+    p.remove(null)
+    check("idsiz silme sadece kimliksiz kaydi siler",
+        p.peers().size == ided && p.peers().none { it.id == null })
+    p.clearAll()
+    check("clearAll tabloyu bosaltir", !p.paired && p.peers().isEmpty())
+
+    // Eski surumden gelen tek dosya: id'siz bir kayit olarak okunur, kaybolmaz.
+    val old = File(System.getProperty("java.io.tmpdir"), "atvm-peers-legacy-${System.nanoTime()}").apply { mkdirs() }
+    File(old, "pair_key_v2.bin").writeBytes(ByteArray(32) { 9 })
+    val p2 = Pairing(old) { now }
+    check("eski tek anahtar tabloya tasindi", p2.paired && p2.peers().single().id == null)
+    check("eski dosya artik yok", !File(old, "pair_key_v2.bin").exists())
+    File(File(old, "pair_keys_v2"), "EEEEEEEEEEEEEEEE.bin").writeBytes(ByteArray(31))
+    check("bozuk (32 bayt degil) kayit sayilmaz", p2.peers().size == 1)
+    // Son gorulme yenilenir: dogrulanmis oturum dusurulme sirasini kendine lehine cevirir.
+    now += 5000
+    p2.touch("EEEEEEEEEEEEEEEE")
+    check("touch gecersiz/eksik kayitta sessiz kalsin", p2.peers().size == 1)
+
+    dir.deleteRecursively(); old.deleteRecursively()
 }
 
 private fun lineCap() {
@@ -172,6 +244,7 @@ fun main() {
     section("TV akışı") { responderReproducesVector() }
     section("ret yolları") { responderRejects() }
     section("kilit") { lockout() }
+    section("tablo") { peersTable() }
     section("satır sınırı") { lineCap() }
     if (failures == 0) println("eşleştirme öz-denetimi: $checks/$checks GEÇTİ")
     else { println("eşleştirme öz-denetimi: $failures/$checks BAŞARISIZ"); kotlin.system.exitProcess(1) }

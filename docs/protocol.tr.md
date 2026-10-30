@@ -3,9 +3,17 @@
 > Türkçesi bu dosya; İngilizce aslı: [protocol.md](protocol.md)
 
 Tek kaynak spesifikasyon. Uygulamalar:
-- macOS: `src/sender-macos/Sources/ATVMSender/{Pairing,KeyStore,ControlClient,SenderServer,Transport,RtpRetransmit}.swift`
-- Android TV: `receiver/app/src/main/java/dev/atvm/receiver/{Protocol,PasskeyPairing,Pairing,ControlLink,SenderConnector,RtpDepacketizer,VideoReorderBuffer}.kt`
+- macOS yayıncı: `src/sender-macos/Sources/ATVMSender/{Pairing,KeyStore,ControlClient,SenderServer,Transport,RtpRetransmit}.swift`
+- Android TV alıcısı: `receiver/app/src/main/java/dev/atvm/receiver/{Protocol,PasskeyPairing,Pairing,ControlLink,SenderConnector,RtpDepacketizer,VideoReorderBuffer}.kt`
+- Windows yayıncı: planlanıyor
 - Test sürücüleri: `scripts/test-tv-initiated.py`, `scripts/test-audio-source.py`, `scripts/test-receiver-reorder.sh`, `scripts/test-receiver-pairing.sh`
+
+**Terimler.** *Yayıncı* = yakalayıp kodlayan bilgisayar; bugün macOS, planlanan Windows. *Alıcı* = TV
+uygulaması. Tek alıcı derlemesi her yayıncı platformuna hizmet verir: tel biçiminde, kriptolamada ya
+da kodek sözleşmesinde yayıncının işletim sistemine göre dallanan hiçbir şey yok. §3.2'deki eşleştirme
+dizgilerinin içindeki `mac` rol etiketi bir **platform adı değil, protokol sabitidir** — Windows yayıncı
+turlarda `mac` yazar, çünkü değiştirmek mevcut tüm eşleşmeleri geçersiz kılar. Belgenin eski satırları
+"yayıncı" demek istediği yerde "Mac" yazar.
 
 Etiketler: **Doğrulandı** = iki gerçek uç arasında çalıştırıldı (Apple Silicon Mac ↔ Android TV alıcısı, API 30, 2026-10-10).
 
@@ -38,10 +46,16 @@ Keşfin alıcı yanı simetriktir: Mac kendini `_atvm-sender._tcp`, `serviceName
 `port = 7610` olarak yayınlar; TV de bu türü tarar. Eşleşme, taraflar birbirinin adresini hiç
 bilmeden de olabilmeli; bu yüzden iki uç da UDP **7611** üzerindeki düz yoklamaya yanıt verir:
 
-- Mac ağa `{"t":"find","name":"<HostName>"}` yayar. Açık olan her alıcı, paketin kaynağına tek bir
-  yanıt yazar: `{"t":"tv","name":<model>,"ip":<kendi IPv4>,"cport":7601,"mport":7602,"paired":bool}`.
+- Mac ağa `{"t":"find","name":"<HostName>","id":"<device_id>"}` yayar (`id` seçilik; eski yayıncı
+  yazmaz). Açık olan her alıcı, paketin kaynağına tek bir yanıt yazar:
+  `{"t":"tv","name":<model>,"ip":<kendi IPv4>,"cport":7601,"mport":7602,"paired":bool,"slot":int}`.
+  `paired`, yayıncının gerçekten sorduğu soruyu yanıtlar — *bu yoklamadaki id için kayıtlı anahtar var
+  mı* — `slot` ise kaç eşleşme gözünün boş olduğunu söyler (§3.4). `id` olmayan yoklama eski anlamda
+  kalır: `paired` = en az bir kayıt var.
 - Alıcı, o **`find` paketin kaynak adresini** ilgili Mac'in ulaşılabilir adresi olarak not eder ve
   yayını başlatırken *önce* onu dener. Ulaşmış bir paket, o adresten geri dönülebildiğinin kanıtıdır.
+  Ad defterindeki kayıtlar `name` ile tutulmaya devam eder (TV'nin bilgisayar listesi servis
+  adlarından kuruluyor); `paired` yanıtı ise eşleşme tablosundan gelir ve `id` ile sorulur.
 
 Bu kural neden var (17.10.2026 ölçüldü): aynı /24'te iki arayüzü olan bir Mac — TV'ye giden yol `en0`
 üzerindeyken `en1` ilgisiz bir bağlantı — yanlış A kaydını yayınladı. TV o adresi aradı: ICMP'te %100
@@ -57,8 +71,8 @@ sonrası kullanıcı kodu yazarken 180 sn bekler); doğrulanmış oturumda okuma
 
 | Yön | `t` | Alanlar | Anlamı |
 |---|---|---|---|
-| Mac→TV | `hello` | `name`, `ver` (=2) | oturum açılışı |
-| TV→Mac | `pair_required` | `pin_ttl_ms`, `ver` | eşleşme yok; 6 haneli kod TV ekranında |
+| Mac→TV | `hello` | `name`, `ver` (=2), `device_id`? (§3.4) | oturum açılışı |
+| TV→Mac | `pair_required` | `pin_ttl_ms`, `ver` | bu yayıncı daha eşleşmemiş; 6 haneli kod TV ekranında |
 | Mac→TV | `pair_init` | `pk` (b64, 65 B) | Mac'in geçici P-256 açık anahtarı (§3.2) |
 | TV→Mac | `pair_key` | `pk` (b64, 65 B) | TV'nin geçici P-256 açık anahtarı |
 | iki yön | `pk_commit` | `i`, `c` (b64, 32 B) | tur `i` taahhüdü: önce Mac, sonra TV |
@@ -69,14 +83,14 @@ sonrası kullanıcı kodu yazarken 180 sn bekler); doğrulanmış oturumda okuma
 | TV→Mac | `challenge` | `nonce_tv` (b64), `ver` | zaten eşleşmiş; kanıt iste |
 | Mac→TV | `proof` | `nonce_mac` (b64), `proof` (b64) | oturum kanıtı (§3.2) |
 | TV→Mac | `ready` | `session`, `proof` (b64) | oturum açık + TV'nin kanıtı; tutmazsa Mac bağlantıyı bırakır |
-| TV→Mac | `denied` | `reason`, (`ver`, `retry_after_ms`) | `version` / `locked` / `pin_mismatch` / `pin_expired` / `confirm_mismatch` / `bad_key` / `bad_message` / `auth_failed` / `not_paired` / `already_paired` / `unexpected_message` / `bad_json` |
+| TV→Mac | `denied` | `reason`, (`ver`, `retry_after_ms`) | `version` / `locked` / `pin_mismatch` / `pin_expired` / `confirm_mismatch` / `bad_key` / `bad_message` / `auth_failed` / `not_paired` / `already_paired` / `no_slot` / `unexpected_message` / `bad_json` |
 | Mac→TV | `start` | `width,height,fps,bitrate,ssrc,media_port,payload_type` + `audio_ssrc,audio_payload_type,audio_sample_rate,audio_channels` + `sync,video_rtp_base,audio_rtp_base` | yayın parametreleri (§4.1) ve ortak saat tabanları (§5); yalnız doğrulanmış oturum |
 | TV→Mac | `started` | `media_port` | çözücü + UDP hazır |
 | TV→Mac | `cap_error` | `reason,max_width,max_height,codecs` | TV bu profili reddetti |
 | TV→Mac | `idr_request` | — | paket kaybı: acil anahtar kare iste |
 | Mac→TV | `stop` | — | yayını durdur; yalnız doğrulanmış oturum (aksi `denied/not_paired`) |
 | TV→Mac | `stopped` | `reason?` | durdu — `stop`/`unpair` yanıtı **ve** TV'de kendiliğinden biten yayın (kumandadan DURDUR, yüzey kaybı, çözücü hatası). Mac bu mesajı görünce yayını keser; yanıt yazmaz |
-| Mac→TV | `unpair` | — | eşleşmeyi sil; yalnız doğrulanmış oturum. TV `stopped/unpaired` yazar, bağlantıyı kapatır |
+| Mac→TV | `unpair` | — | **bu yayıncının** kaydını sil. Kapsam, bu oturumda kanıtı doğrulanan kayıttır; ağdan gelen kimlik iddiasından asla gelmez (§3.3). Kimlik göndermeyen eski yayıncı böylece kendi tek kaydını siler, diğerleri eşleşik kalır. Yalnız doğrulanmış oturum. TV `stopped/unpaired` yazar, bağlantıyı kapatır |
 | çift | `ping`/`pong` | `now` | canlılık; doğrulama istemez, durum değiştirmez |
 
 ### 3.1 TV'nin başlattığı yön (kumandadan bilgisayar seçme)
@@ -85,7 +99,7 @@ Aynı sözlük, roller yer değiştirir. TV, `_atvm-sender._tcp` listesinden se�
 7610'dan bağlanır; böylece yayın iki yönden de başlatılabilir:
 
 ```
-TV → Mac : hello     {role:"receiver", name, ver:2}
+TV → Mac : hello     {role:"receiver", name, ver:2, device_id?}
 Mac → TV : challenge {nonce_mac, ver:2}      (kayıt yoksa denied/not_paired, sürüm farkı denied/version)
 TV → Mac : proof     {nonce_tv, proof = P(K, "rev", "tv",  nonce_mac, nonce_tv)}
 Mac → TV : ready     {proof = P(K, "rev", "mac", nonce_mac, nonce_tv)}   (TV doğrulayamazsa bırakır)
@@ -166,12 +180,44 @@ session       : SHA-256("atvm-fp-v2" ‖ K) ilk 4 bayt, hex (anahtar baytı gös
   bekliyoruz (doğrulanmadı). Önceki sürümün
   `paired_keys.json` dosyası ilk erişimde Anahtar Zinciri'ne taşınır ve silinir; TV adları sır olmadığından
   `paired_names.json` dosyasında kalır.
-- **TV:** uygulamaya özel dizinde `pair_key_v2.bin` (yalnız uygulamanın UID'si okur; `allowBackup="false"`,
-  yedeğe ve buluta gitmez). Donanım anahtar deposu kullanılmıyor: kök yetkisi ya da fiziksel erişimi olan
-  saldırgan okuyabilir (SECURITY.md). v1 anahtarı (`session_key.bin`) ilk açılışta silinir, çünkü düz metin
-  giden PIN'den türüyordu; bu sürüme geçişte bir kez yeniden eşleşmek gerekir.
+- **TV:** toplamda tek anahtar değil, **yayıncı başına bir kayıt**: TV bir evin bilgisayarlarını paylaşır
+  ve Windows PC'yi eşlemek için Mac'in kaydını silmek eşleşme modeli değil, hatadır. Kayıtlar
+  uygulamaya özel dizinde `pair_keys_v2/<id>` içinde durur (yalnız uygulamanın UID'si okur;
+  `allowBackup="false"`, yedeğe ve buluta gitmez), her biri 32 baytlık `K`'yı taşır; yanına sır olmayan
+  `paired_senders.json` gösterim adı ve son görülme zamanını yazar. Tablo **4 kayıt** ile sınırlıdır;
+  yeni eşleşme yer açmak zorundaysa en eski son-görülme kaydı düşer. Eski tek dosya
+  (`pair_key_v2.bin`) `id`'siz bir kayıt olarak okunur: hâlihazırda eşleşmiş Mac çalışmaya devam eder ve
+  bir sonraki eşleşmede `id`'sini alır. Donanım anahtar deposu kullanılmıyor: kök yetkisi ya da fiziksel
+  erişimi olan saldırgan okuyabilir (SECURITY.md). v1 anahtarı (`session_key.bin`) ilk açılışta silinir,
+  çünkü düz metin giden PIN'den türüyordu; bu sürüme geçişte bir kez yeniden eşleşmek gerekir.
+- **Doğrulama, iddia edilen kimliğe asla güvenmez.** `hello.device_id` doğrulanmamış bir etikettir; alıcı
+  onu yalnız kaydı *adlandırmak ve saklamak* için kullanır. `proof` sınarken her kayıtlı anahtar altında
+  oturum kanıtını hesaplayıp sabit-zamanlı karşılaştırır — en çok 4 HMAC — ve eşleşen kayıt zaten
+  uçtur. Yanlış `id` başka bir bilgisayarın anahtarını kullanamaz, onu ezemez de: anahtar yazmak
+  passkey eşleşmesini tamamlamayı, o da TV ekranındaki PIN'i bilmeyi gerektirir.
+- TV'nin başlattığı yönde TV *istemci*dir ve kimin yanıtladığını bilmeden bir anahtar seçmek zorundadır.
+  Kural: adayları yoklamadan (§2.1) öğrenilen adres/ad bağına göre sırala, ilkini dene;
+  `denied/auth_failed` gelirse yeniden bağlanıp sonrakini dene (≤ 4 deneme). `ready.session` parmak izi
+  hangi kaydın yanıtladığını kesinleştirir ve bağ o anda hatırlanır.
 - Otomatik cihaz testi için yalnız **debug** derlemesi (`BuildConfig.DEBUG`) üretilen kodu logcat'e yazar
   (`ATVM-Pairing: DEBUG eşleştirme kodu`); release derlemesi kodu hiçbir yere yazmaz.
+
+### 3.4 Yayıncı kimliği (`device_id`)
+
+Tek bir yayıncı kurulumuna ait kararlı, kendinin seçtiği etiket; TV iki bilgisayarı ayırt edebilsin:
+
+- OS CSPRNG'den 12 rastgele bayt, base64 (16 karakter); ilk açılışta üretilir ve eşleşme anahtarlarının
+  yanındaki kendi yayıncı deposunda saklanır (macOS: Anahtar Zinciri, hesap `self.device_id`).
+- **Şuradan türetilmez:** ana makine adı, MAC/BSSID, seri, Cast kimliği, kullanıcı adı ya da IP — bu bir
+  ilişkilendirme tutamacıdır, yanına başka bir tanımlayıcı alamaz. Yeniden üretilmesi (kurulum silindi,
+  yeni kullanıcı hesabı) yeni bir bilgisayar demek ve yeniden eşleşme ister.
+- `hello`da ve ağ yoklaması `find`ta gönderilir. Sır değildir, **yetkilendirme girdisi değildir** (§3.3)
+  ve `unpair` için de gerekmez: alıcı hangi kaydın doğrulandığını zaten biliyor.
+- `already_paired` artık kimlik-kapsamlı: tanınmayan bir `id`, diğer kayıtlar eşleşmiş dururken
+  eşleşebilir; yalnızca zaten anahtarı olan bir `id`'nin yeniden eşleşmesi reddedilir. Tablo doluysa ve
+  `id` tanınmıyorsa TV `denied/no_slot` yazar, kullanıcı TV'den bir kaydı siler.
+- Bu etiket bir *eşleşme tablosu* için var, kullanıcı hesabı için değil: hesap, bulut ve telemetri yok;
+  TV aynı anda tek oturuma hizmet verir.
 
 ## 4. Medya: RTP + H.264
 
@@ -358,3 +404,11 @@ audio_ts = audio_rtp_base + round((ilk_örnek_host_sn      - kök_sn) * 48000)  
 `hello.ver = 2` (v2: passkey eşleştirmesi + karşılıklı oturum kanıtı). Geriye uyumsuz değişiklikte `ver` artar;
 sunucu `denied{"reason":"version","ver":N}` döner, `hello` yanıtları `ver` taşır.
 Alanda yeni özellik eklerken eski uçlar yok sayabilmeli (JSON, zorunlu alan yok).
+
+`device_id`, `no_slot` ve yoklama yanıtındaki `slot`, **v2 içinde** ek alanlardır: tel biçimi, eşleştirme
+matematiği ve kodek sözleşmesi değişmez, kimse yeniden eşleşmeye zorlanmaz. Eski bir alıcı yine en çok
+bir bilgisayarı eşler (tablosu yoktur); eski bir yayıncı yeni alıcıya `id`'siz tek kayıt olarak ulaşır.
+
+Durum (30.10.2026): tablo alıcıda ve macOS yayıncısında yazıldı; mantığı `scripts/test-receiver-pairing.sh`
+JVM öz-denetimiyle (85 denetim) sınanıyor — **iki bilgisayarın aynı gerçek TV ile eşleşmesi cihazda
+henüz doğrulanmadı.**

@@ -66,7 +66,8 @@
     <string name="deny_no_window">"Mac'te yayınlanacak pencere seçili değil — Mac arayüzünden bir pencere seç, sonra OK"</string>
     <string name="deny_not_paired">"Mac bu TV ile eşleşmiş saymıyor — TV'deki kodu Mac'e yeniden girin"</string>
     <string name="deny_auth_failed">Mac eşleşme anahtarını doğrulayamadı — eşleştirmeyi silip yeniden eşleşin</string>
-    <string name="deny_code_used">Bu kod daha önce kullanıldı — OK ile yeni kod alın</string>
+    <string name="deny_already_paired">Bu bilgisayar bu TV ile zaten eşleşmiş — yeniden eşleşmek için önce TV\'den eşleştirmeyi silin</string>
+    <string name="deny_no_slot">Bu TV en fazla sayıda bilgisayarı hatırlıyor — TV\'den birini silin, sonra yeniden eşleşin</string>
     <string name="deny_code_expired">Kodun süresi doldu — OK ile yeni kod alın</string>
     <string name="deny_locked">Çok fazla hatalı deneme — biraz bekleyip yeniden deneyin</string>
     <string name="deny_version">Mac ile sürümler uyumsuz — iki tarafı da güncelleyin</string>

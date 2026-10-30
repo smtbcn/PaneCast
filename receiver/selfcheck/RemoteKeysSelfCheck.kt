@@ -118,7 +118,7 @@ fun main() {
     //    kullanıcı OK'a basıp boş ekranda bekliyordu. Satırın yazısı katalogda (`deny_*`),
     //    burada ayırt edilen GEREKÇE → ANAHTAR eşlemesinin kendisi.
     val reasons = listOf("no_window_selected_on_sender", "not_paired", "auth_failed", "already_paired",
-                         "pin_expired", "locked", "version")
+                         "pin_expired", "locked", "version", "no_slot")
     val keys = reasons.map { ControlMessages.denied(it).key }
     val allReasons = reasons + listOf("bad_json", "unexpected_message")
     check("her bilinen gerekçe kendi satırını alıyor",

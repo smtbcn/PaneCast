@@ -17,6 +17,13 @@ enum TvPresence {
         let paired: Bool
     }
 
+    /// `find` gövdesi (§2.1 + §3.4). Ayrı duruyor: bayt biçimi TV'de JSON olarak okunuyor ve
+    /// `id` yalnız base64url kümesinden geldiği için kaçış gerektirmiyor — ikisini de test ediyoruz.
+    static func findPayload(name: String, id: String) -> Data {
+        let tail = id.isEmpty ? "" : #","id":"\#(id)""#
+        return Data(#"{"t":"find","name":"\#(name)"\#(tail)}"#.utf8)
+    }
+
     /// `find` yayınlar ve `seconds` boyunca gelen yanıtları toplar.
     static func query(seconds: Double = 1.5) -> [Reply] {
         var out: [String: Reply] = [:]
@@ -38,8 +45,8 @@ enum TvPresence {
         }
 
         // `name` da yazılır: alıcı, bu paketi *kaynak adresinden* tanıyıp kendisine ulaşılabilen
-    // adresi öğrensin (çok arayüzlü Mac'te mDNS A kaydı yanlış arayüzü verebiliyor — ölçüldü).
-    let payload = Data(#"{"t":"find","name":"\#(HostName.current)"}"#.utf8)
+        // adresi öğrensin (çok arayüzlü Mac'te mDNS A kaydı yanlış arayüzü verebiliyor — ölçüldü).
+        let payload = findPayload(name: HostName.current, id: DeviceID.current)
         func shout() {
             var to = sockaddr_in()
             to.sin_family = sa_family_t(AF_INET)

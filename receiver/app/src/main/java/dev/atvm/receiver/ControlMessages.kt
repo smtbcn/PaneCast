@@ -17,8 +17,8 @@ package dev.atvm.receiver
  */
 object ControlMessages {
     /** Red satırının dilinden bağımsız kimliği. */
-    enum class DenyKey { noWindow, notPaired, authFailed, codeUsed, codeExpired,
-                         locked, version, protocol, generic, unknown }
+    enum class DenyKey { noWindow, notPaired, authFailed, alreadyPaired, codeExpired,
+                         locked, version, protocol, noSlot, generic, unknown }
 
     /**
      * Bir red satırı: anahtar + `detail`. `detail` YALNIZ `unknown`da doludur ve Mac'in ham
@@ -31,7 +31,8 @@ object ControlMessages {
         "no_window_selected_on_sender" -> Denial(DenyKey.noWindow)
         "not_paired" -> Denial(DenyKey.notPaired)
         "auth_failed" -> Denial(DenyKey.authFailed)
-        "already_paired" -> Denial(DenyKey.codeUsed)
+        "already_paired" -> Denial(DenyKey.alreadyPaired)
+        "no_slot" -> Denial(DenyKey.noSlot)
         "pin_expired" -> Denial(DenyKey.codeExpired)
         "locked" -> Denial(DenyKey.locked)
         "version" -> Denial(DenyKey.version)

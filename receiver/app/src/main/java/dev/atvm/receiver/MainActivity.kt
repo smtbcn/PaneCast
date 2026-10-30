@@ -125,11 +125,13 @@ class MainActivity : Activity(), ControlLink.Listener {
         control = ControlLink(filesDir, this)
         control.start()
         publishMdns()
-        // Uygulama açılır açılmaz: eşleşme yoksa PIN ekranı hemen görünür
+        // Uygulama açılır açılmaz: eşleşebilecek boş göz varsa PIN ekranı hemen görünür
         // (eskiden yalnızca Mac bağlanınca üretiliyordu; kullanıcı boşta kalıyordu).
-        if (!control.isPaired) control.displayPin()
+        // Tablo doluysa kod göstermek boş vaat olurdu — ikinci bilgisayar da eşleşebilsin (§3.4).
+        if (control.wantsPin()) control.displayPin()
         // Eşleşme olmasa da bulunabilelim: Mac'in ağ yoklamasına adresimizi geri yazarız.
-        presence = PresenceResponder({ localIpv4s() }, { control.isPaired })
+        presence = PresenceResponder({ localIpv4s() }, { id -> control.isPairedWith(id) },
+                                     { control.freeSlots() })
         browser = SenderBrowser(applicationContext) { list ->
             runOnUiThread {
                 computers.clear(); computers.addAll(list)
@@ -251,11 +253,12 @@ class MainActivity : Activity(), ControlLink.Listener {
         ControlMessages.DenyKey.noWindow -> R.string.deny_no_window
         ControlMessages.DenyKey.notPaired -> R.string.deny_not_paired
         ControlMessages.DenyKey.authFailed -> R.string.deny_auth_failed
-        ControlMessages.DenyKey.codeUsed -> R.string.deny_code_used
+        ControlMessages.DenyKey.alreadyPaired -> R.string.deny_already_paired
         ControlMessages.DenyKey.codeExpired -> R.string.deny_code_expired
         ControlMessages.DenyKey.locked -> R.string.deny_locked
         ControlMessages.DenyKey.version -> R.string.deny_version
         ControlMessages.DenyKey.protocol -> R.string.deny_protocol
+        ControlMessages.DenyKey.noSlot -> R.string.deny_no_slot
         ControlMessages.DenyKey.generic -> R.string.deny_generic
         ControlMessages.DenyKey.unknown -> R.string.deny_unknown
     }
@@ -627,7 +630,7 @@ class MainActivity : Activity(), ControlLink.Listener {
             .setTitle(text(R.string.home_unpair_title))
             .setMessage(text(R.string.home_unpair_message))
             .setPositiveButton(text(R.string.home_unpair_confirm)) { _, _ ->
-                control.forgetPairing()
+                control.forgetAllPairings()
                 renderStatus()
             }
             .setNegativeButton(text(R.string.home_unpair_cancel), null)
@@ -742,7 +745,8 @@ class MainActivity : Activity(), ControlLink.Listener {
     private fun startFromSelectedDevice(pos: Int) {
         if (resuming || pos !in computers.indices) return
         val c = computers[pos]
-        val key = control.storedSessionKey() ?: run { renderNote(text(R.string.home_note_no_key)); return }
+        val keys = control.sessionKeysFor(c.name)
+        if (keys.isEmpty()) { renderNote(text(R.string.home_note_no_key)); return }
         resuming = true
         renderNote(text(R.string.home_note_calling, c.name))
         Thread {
@@ -759,7 +763,7 @@ class MainActivity : Activity(), ControlLink.Listener {
                 } + listOfNotNull(seen), mine, preferred = seen)
             Log.i(TAG, "yayın adayı ${targets.size} adres: ${targets.joinToString { it.substringBeforeLast('.') + ".*" }}")
             val err = SenderConnector.resume(targets, c.port, Build.MODEL,
-                mine.firstOrNull() ?: "", Protocol.MEDIA_PORT, key, control)
+                mine.firstOrNull() ?: "", Protocol.MEDIA_PORT, keys, control)
             runOnUiThread {
                 resuming = false
                 if (err == null) renderNote(text(R.string.home_note_called, c.name))

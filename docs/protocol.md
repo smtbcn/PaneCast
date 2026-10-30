@@ -3,9 +3,17 @@
 > English original. Türkçe: [protocol.tr.md](protocol.tr.md)
 
 Single-source specification. Implementations:
-- macOS: `src/sender-macos/Sources/ATVMSender/{Pairing,KeyStore,ControlClient,SenderServer,Transport,RtpRetransmit}.swift`
-- Android TV: `receiver/app/src/main/java/dev/atvm/receiver/{Protocol,PasskeyPairing,Pairing,ControlLink,SenderConnector,RtpDepacketizer,VideoReorderBuffer}.kt`
+- macOS sender: `src/sender-macos/Sources/ATVMSender/{Pairing,KeyStore,ControlClient,SenderServer,Transport,RtpRetransmit}.swift`
+- Android TV receiver: `receiver/app/src/main/java/dev/atvm/receiver/{Protocol,PasskeyPairing,Pairing,ControlLink,SenderConnector,RtpDepacketizer,VideoReorderBuffer}.kt`
+- Windows sender: planned
 - Test drivers: `scripts/test-tv-initiated.py`, `scripts/test-audio-source.py`, `scripts/test-receiver-reorder.sh`, `scripts/test-receiver-pairing.sh`
+
+**Terms.** *Broadcaster* (also *sender*) = the computer that captures and encodes; today macOS, planned
+Windows. *Receiver* = the TV app. One receiver build serves every broadcaster platform: nothing in the
+wire format, the crypto or the codec contract branches on the broadcaster's operating system. The role
+token `mac` inside the pairing strings (§3.2) is a **protocol constant, not a platform label** — a
+Windows broadcaster sends `mac` too, because changing it would invalidate every existing pairing.
+Older prose in this document says "Mac" where it means "the broadcaster".
 
 Labels: **Validated** = run between two real endpoints (Apple Silicon Mac ↔ Android TV receiver, API 30, 2026-10-10).
 
@@ -40,10 +48,16 @@ The receiver side of discovery is symmetrical: the Mac advertises itself as
 Pairing must also work before either side knows the other's address, so both ends answer a plain UDP
 probe on port **7611**:
 
-- The Mac broadcasts `{"t":"find","name":"<HostName>"}`. Every open receiver answers once, to the
-  packet's source, with `{"t":"tv","name":<model>,"ip":<its IPv4>,"cport":7601,"mport":7602,"paired":bool}`.
+- The Mac broadcasts `{"t":"find","name":"<HostName>","id":"<device_id>"}` (`id` is optional; an old
+  broadcaster omits it). Every open receiver answers once, to the packet's source, with
+  `{"t":"tv","name":<model>,"ip":<its IPv4>,"cport":7601,"mport":7602,"paired":bool,"slot":int}`.
+  `paired` answers the question the sender actually has — *is there a key for the id in this probe* —
+  and `slot` is how many pairing entries are still free (§3.4). A probe without `id` keeps the old
+  meaning: `paired` = at least one entry exists.
 - The receiver records the **source address of the `find` packet** as that Mac's reachable address and
   tries it *first* when it starts a broadcast. A packet that arrived is proof the address routes back.
+  Entries in that address book stay keyed by `name` (the reverse-connect list is built from service
+  names); the `paired` answer comes from the pairing table and is keyed by `id`.
 
 Why this rule exists (measured 2026-10-17): a Mac whose two interfaces both sat inside the TV's own /24 —
 one carrying the route to the TV, the other an unrelated link — advertised the wrong A record. The TV dialed that
@@ -61,8 +75,8 @@ authenticated session there is no read timeout.
 
 | Direction | `t` | Fields | Meaning |
 |---|---|---|---|
-| Mac→TV | `hello` | `name`, `ver` (=2) | session opening |
-| TV→Mac | `pair_required` | `pin_ttl_ms`, `ver` | no pairing yet; 6-digit code on the TV screen |
+| Mac→TV | `hello` | `name`, `ver` (=2), `device_id`? (§3.4) | session opening |
+| TV→Mac | `pair_required` | `pin_ttl_ms`, `ver` | this broadcaster is not paired yet; 6-digit code on the TV screen |
 | Mac→TV | `pair_init` | `pk` (b64, 65 B) | the Mac's ephemeral P-256 public key (§3.2) |
 | TV→Mac | `pair_key` | `pk` (b64, 65 B) | the TV's ephemeral P-256 public key |
 | both directions | `pk_commit` | `i`, `c` (b64, 32 B) | the commitment of round `i`: the Mac first, then the TV |
@@ -73,14 +87,14 @@ authenticated session there is no read timeout.
 | TV→Mac | `challenge` | `nonce_tv` (b64), `ver` | already paired; ask for proof |
 | Mac→TV | `proof` | `nonce_mac` (b64), `proof` (b64) | session proof (§3.2) |
 | TV→Mac | `ready` | `session`, `proof` (b64) | session open + the TV's proof; if it does not match, the Mac drops the connection |
-| TV→Mac | `denied` | `reason`, (`ver`, `retry_after_ms`) | `version` / `locked` / `pin_mismatch` / `pin_expired` / `confirm_mismatch` / `bad_key` / `bad_message` / `auth_failed` / `not_paired` / `already_paired` / `unexpected_message` / `bad_json` |
+| TV→Mac | `denied` | `reason`, (`ver`, `retry_after_ms`) | `version` / `locked` / `pin_mismatch` / `pin_expired` / `confirm_mismatch` / `bad_key` / `bad_message` / `auth_failed` / `not_paired` / `already_paired` / `no_slot` / `unexpected_message` / `bad_json` |
 | Mac→TV | `start` | `width,height,fps,bitrate,ssrc,media_port,payload_type` + `audio_ssrc,audio_payload_type,audio_sample_rate,audio_channels` + `sync,video_rtp_base,audio_rtp_base` | broadcast parameters (§4.1) and common clock bases (§5); only in an authenticated session |
 | TV→Mac | `started` | `media_port` | decoder + UDP ready |
 | TV→Mac | `cap_error` | `reason,max_width,max_height,codecs` | the TV rejected this profile |
 | TV→Mac | `idr_request` | — | packet loss: request an urgent key frame |
 | Mac→TV | `stop` | — | stop the broadcast; only in an authenticated session (otherwise `denied/not_paired`) |
 | TV→Mac | `stopped` | `reason?` | stopped — the reply to `stop`/`unpair` **and** a broadcast that ended on its own on the TV (STOP from the remote, surface loss, decoder error). On seeing this message the Mac cuts the broadcast; it writes no reply |
-| Mac→TV | `unpair` | — | delete the pairing; only in an authenticated session. The TV writes `stopped/unpaired` and closes the connection |
+| Mac→TV | `unpair` | — | delete **this broadcaster's** entry. The scope is the entry whose proof authenticated this session, never an identity claimed on the wire (§3.3); an old id-less broadcaster therefore deletes its own single entry and leaves the others paired. Only in an authenticated session. The TV writes `stopped/unpaired` and closes the connection |
 | bidirectional | `ping`/`pong` | `now` | liveness; needs no authentication and changes no state |
 
 ### 3.1 The TV-initiated direction (choosing the computer from the remote)
@@ -89,7 +103,7 @@ The same vocabulary, the roles swap. The TV connects on 7610 to the computer it 
 `_atvm-sender._tcp` list; this way the broadcast can be started from either direction:
 
 ```
-TV → Mac : hello     {role:"receiver", name, ver:2}
+TV → Mac : hello     {role:"receiver", name, ver:2, device_id?}
 Mac → TV : challenge {nonce_mac, ver:2}      (no record → denied/not_paired, version mismatch → denied/version)
 TV → Mac : proof     {nonce_tv, proof = P(K, "rev", "tv",  nonce_mac, nonce_tv)}
 Mac → TV : ready     {proof = P(K, "rev", "mac", nonce_mac, nonce_tv)}   (the TV drops it if it cannot verify)
@@ -179,13 +193,46 @@ session       : SHA-256("atvm-fp-v2" ‖ K) first 4 bytes, hex (no key byte is e
   every build (not verified).
   The previous version's `paired_keys.json` file is migrated into the Keychain on first access and
   deleted; TV names stay in the `paired_names.json` file since they are no secret.
-- **TV:** `pair_key_v2.bin` in the app-specific directory (only the app's UID reads it;
-  `allowBackup="false"`, it goes neither to backup nor to the cloud). No hardware key store is
+- **TV:** one entry **per broadcaster**, not one key in total: the TV is shared by a household's
+  computers, and evicting one computer to pair another is not a pairing model, it is a bug. Entries
+  live in `pair_keys_v2/<id>` in the app-specific directory (only the app's UID reads it;
+  `allowBackup="false"`, it goes neither to backup nor to the cloud), each holding the 32-byte `K`,
+  beside a non-secret `paired_senders.json` with the display name and last-seen time. The table is
+  capped at **4 entries**; the oldest last-seen entry is evicted when a new pairing needs room. The
+  legacy single file (`pair_key_v2.bin`) is read as an entry with no `id`, so an already-paired
+  broadcaster keeps working and simply gains an `id` the next time it pairs. No hardware key store is
   used: an attacker with root privileges or physical access can read it (SECURITY.md). The v1 key
   (`session_key.bin`) is deleted on first launch, because it was derived from the PIN that travelled
   in clear text; moving to this version requires pairing anew once.
+- **Authentication never trusts a claimed identity.** `hello.device_id` is an unauthenticated label, so
+  the receiver uses it only to *name and store* an entry. To verify a `proof` it computes the session
+  proof under every stored key and constant-time-compares — at most 4 HMACs — and the entry that
+  matches *is* the peer. A wrong `id` cannot borrow another computer's key, and cannot overwrite it
+  either: writing a key requires completing the passkey pairing, which requires the PIN that only ever
+  appears on the TV screen.
+- In the TV-initiated direction the TV is the *client* and must choose a key before it knows who
+  answers. Rule: order the candidates by the address/name binding learned from presence (§2.1), try the
+  first, and on `denied/auth_failed` reconnect and try the next (≤ 4 attempts); the `ready.session`
+  fingerprint confirms which entry answered and the binding is then remembered.
 - For automated device testing only the **debug** build (`BuildConfig.DEBUG`) writes the generated
   code to logcat (`ATVM-Pairing: DEBUG eşleştirme kodu`); the release build writes the code nowhere.
+
+### 3.4 Broadcaster identity (`device_id`)
+
+A stable, self-chosen label for one broadcaster install, so a TV can tell two computers apart:
+
+- 12 random bytes from the OS CSPRNG, base64 (16 characters), generated on first launch and kept in
+  the broadcaster's own key store beside the pairing keys (macOS: Keychain, account `self.device_id`).
+- **Never derived from** a hostname, MAC/BSSID, serial, Cast ID, user name or IP address — it is a
+  correlation handle, so it must carry no other identifier with it. Regenerating it (reinstall, new
+  user account) reads as a new computer and needs pairing again.
+- Sent in `hello` and in the presence `find` probe. It is not secret, it is not an authorization input
+  (§3.3), and it is not needed in `unpair` — the receiver already knows which entry authenticated.
+- `already_paired` is now scoped to an identity: an unknown `id` may pair while other entries stay
+  paired; only re-pairing an `id` that already has a key is refused. If the table is full and the `id`
+  is unknown, the TV answers `denied/no_slot` and the user removes an entry on the TV.
+- The label exists for a *pairing table*, not for a user account: there is still no account, no cloud
+  and no telemetry, and the TV serves one session at a time.
 
 ## 4. Media: RTP + H.264
 
@@ -405,3 +452,12 @@ audio_ts = audio_rtp_base + round((first_sample_host_sn   - root_sn) * 48000)   
 `hello.ver = 2` (v2: passkey pairing + mutual session proof). `ver` increases on a backwards-incompatible
 change; the server returns `denied{"reason":"version","ver":N}` and the `hello` replies carry `ver`.
 When adding a feature in a field, old endpoints must be able to ignore it (JSON, no required fields).
+
+`device_id`, `no_slot` and the presence `slot` field are additive **inside v2** — the wire format, the
+pairing math and the codec contract do not change, so no re-pairing is forced. An old receiver still
+pairs at most one computer (it has no table); an old broadcaster reaches a new receiver as a single
+id-less entry.
+
+Status (2026-10-30): the table is implemented in the receiver and the macOS broadcaster; its logic is
+covered by `scripts/test-receiver-pairing.sh` (JVM, 85 checks) — **two computers paired to one real TV
+has not been device-validated yet.**
