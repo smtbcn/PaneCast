@@ -32,6 +32,7 @@ private:
 struct FlatJson {
     std::map<std::string, std::string> strings;
     std::map<std::string, long long> numbers;
+    std::map<std::string, bool> bools;
 
     std::string str(const std::string& k) const {
         auto it = strings.find(k);
@@ -40,6 +41,10 @@ struct FlatJson {
     long long num(const std::string& k, long long def) const {
         auto it = numbers.find(k);
         return it == numbers.end() ? def : it->second;
+    }
+    bool boolean(const std::string& k, bool def) const {
+        auto it = bools.find(k);
+        return it == bools.end() ? def : it->second;
     }
 };
 

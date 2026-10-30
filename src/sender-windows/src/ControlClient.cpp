@@ -1,5 +1,6 @@
 #include "ControlClient.h"
 
+#include "Net.h"
 #include "Pairing.h"
 
 #include <winsock2.h>
@@ -10,13 +11,6 @@
 
 namespace atvm {
 namespace {
-
-/// Winsock başlatması süreçte bir kez; C++'ın statik ömür kuralı bunu thread-safe yapar.
-struct WsaInit {
-    WsaInit() { WSADATA d; WSAStartup(MAKEWORD(2, 2), &d); }
-    ~WsaInit() { WSACleanup(); }
-};
-WsaInit wsa;
 
 std::string lastError(const char* what) {
     char buf[64];
@@ -53,6 +47,7 @@ void ControlClient::close() {
 }
 
 bool ControlClient::connect(const std::string& ipv4, uint16_t port, int timeoutMs) {
+    EnsureWinsock();
     sockaddr_in target = {};
     target.sin_family = AF_INET;                       // TV yalnız IPv4 dinliyor (§1 notu)
     target.sin_port = htons(port);

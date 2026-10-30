@@ -8,10 +8,14 @@
 param(
     [Parameter(Mandatory = $true)][string]$Name,
     [Parameter(Mandatory = $true)][string[]]$Sources,
-    [string]$Libs = 'bcrypt.lib crypt32.lib'
+    [string]$Libs = 'bcrypt.lib crypt32.lib',
+    [string]$RunArgs = ''
 )
 
 $ErrorActionPreference = 'Stop'
+# Ürün ve derleyici Türkçe metni UTF-8 yazıyor; PowerShell aksi halde OEM kod sayfasıyla
+# çözüp uzak kabuğa bozuk gönderiyor (ölçüldü: hata iletileri okunamıyordu).
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 # `-products *` olmadan Build Tools görünmüyor (ölçüldü: installationPath boş döndü).
 $vsPath = (& $vswhere -latest -products * -property installationPath | Out-String).Trim()
@@ -55,6 +59,7 @@ if (-not (Test-Path (Join-Path $out "$Name.exe"))) {
     exit 1
 }
 Write-Output 'DERLEME=tamam'
-& (Join-Path $out "$Name.exe")
+$runList = @($RunArgs -split ' ' | Where-Object { $_ -ne '' })
+& (Join-Path $out "$Name.exe") @runList
 Write-Output ('CIKIS=' + $LASTEXITCODE)
 exit $LASTEXITCODE

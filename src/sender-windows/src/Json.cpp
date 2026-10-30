@@ -152,9 +152,9 @@ bool skipValue(Cursor& c) {
     if (ch == '"') { std::string tmp; return readString(c, tmp); }
     if (ch == 't' || ch == 'f' || ch == 'n') {     // true/false/null: uzunlukları sabit
         static const char* lit[] = {"true", "false", "null"};
-        for (const char* l : lit) {
-            const size_t n = 4;
-            if (c.s.compare(c.i, n, l) == 0) { c.i += n; return true; }
+        static const size_t len[] = {4, 5, 4};
+        for (int k = 0; k < 3; ++k) {
+            if (c.s.compare(c.i, len[k], lit[k]) == 0) { c.i += len[k]; return true; }
         }
         return false;
     }
@@ -207,8 +207,12 @@ std::optional<FlatJson> ParseFlatJson(const std::string& text) {
         } else if (head == '{' || head == '[') {
             // §7: eski uçlar tanımadığı alanı yok sayabilmeli — iç içe değer atlanır.
             if (head == '{' ? !skipObject(c) : !skipArray(c)) return std::nullopt;
-        } else if (c.s.compare(c.i, 4, "true") == 0 || c.s.compare(c.i, 5, "false") == 0) {
-            return std::nullopt;              // protokol hiçbir alanı boolean göndermiyor
+        } else if (c.s.compare(c.i, 4, "true") == 0) {
+            c.i += 4;
+            out.bools[key] = true;             // yoklama yanıtı: "paired" (§2.1)
+        } else if (c.s.compare(c.i, 5, "false") == 0) {
+            c.i += 5;
+            out.bools[key] = false;
         } else if (c.s.compare(c.i, 4, "null") == 0) {
             c.i += 4;                          // null = alan yok sayılır
         } else {
