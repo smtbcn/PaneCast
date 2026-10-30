@@ -73,7 +73,7 @@ class TvScreen(private val context: Context, private val ui: Handler) {
         RemoteKeys.HintKey.lrSync -> R.string.hint_lr_sync
         RemoteKeys.HintKey.menuDetail -> R.string.hint_menu_detail
         RemoteKeys.HintKey.menuStats -> R.string.hint_menu_stats
-        RemoteKeys.HintKey.searchMac -> R.string.hint_search_mac
+        RemoteKeys.HintKey.searchComputer -> R.string.hint_search_computer
     }
 
     val legend = LinearLayout(context).apply {
@@ -240,7 +240,10 @@ class TvScreen(private val context: Context, private val ui: Handler) {
                         else "${text(R.string.app_name)} ${s.version}  ·  ${s.addresses}"
 
         heroPairing.visibility = if (s.screen == RemoteKeys.Screen.PAIRING) View.VISIBLE else View.GONE
-        heroReady.visibility = if (streaming) View.GONE else View.VISIBLE
+        // İki hero aynı ortalanmış yuvada: hazır bloğu kod ekranında GİZLENMELİ, yoksa
+        // bayat başlık kodun üstüne biner (önceden başlık boş olduğu için görünmüyordu;
+        // eşleşik TV'de kod ekranına geçince gerçek metinle bindi, ölçüldü).
+        heroReady.visibility = if (s.screen == RemoteKeys.Screen.READY) View.VISIBLE else View.GONE
         if (s.screen == RemoteKeys.Screen.PAIRING) {
             pinValue.text = s.pin
             pinTimer.text = if (s.pinSecondsLeft > 0) text(R.string.pair_pin_timer, s.pinSecondsLeft)

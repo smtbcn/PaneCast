@@ -29,6 +29,10 @@ class ControlLink(storageDir: File, private val listener: Listener) {
 
         /** Kanal yeniden dinleniyor. */
         fun onControlChannelUp() { }
+
+        /** Kod bekleyen bir bilgisayar bağlandı ya da o bekleyiş bitti: ekran kararı tazelenir
+         *  (hazır ekranında kod hiç çizilmiyordu, ikinci bilgisayar eşleşemiyordu). */
+        fun onPairingPending(pending: Boolean) { }
     }
 
     companion object { private const val TAG = "ATVM-Control" }
@@ -43,8 +47,10 @@ class ControlLink(storageDir: File, private val listener: Listener) {
     @Volatile private var outboundWriter: BufferedWriter? = null
     @Volatile private var outboundSocket: Socket? = null
     @Volatile private var authed = false
-    @Volatile var peerName: String = "-"
-        private set
+    /** Ağdan gelen selamlama etiketi: DOĞRULANMAMIŞ bir iddiadır, yalnız loga yazılır.
+     *  Ekrandaki "eşleşilen" satırı [pairedNames]'ten gelir (ölçülen kusur: hazır ekranı
+     *  herhangi bir cihazın yazdığı adı eşleşmiş gibi gösteriyordu). */
+    @Volatile private var peerName: String = "-"
     /** Doğrulanmış oturumun kaydı: silme gibi yıkıcı işler asla ağdan gelen iddia ile değil,
      *  bu kimlikle yapılır (§3.3). */
     @Volatile private var authedPeerId: String? = null
@@ -52,6 +58,22 @@ class ControlLink(storageDir: File, private val listener: Listener) {
 
     /** Ekranda kod göstermenin anlamı var mı: hâlâ eşleşebilecek bilgisayar yeri var. */
     fun wantsPin(): Boolean = pairing.hasFreeSlot
+
+    /** Şu anda kod bekleyen bir bilgisayar var mı (pair_required ya da commit/reveal sürüyor).
+     *  Ekran kararı buna göre verilir: `wantsPin()` tek başına yetmez, boş göz neredeyse her
+     *  zaman var ve hazır ekranı sürekli kod ekranına dönüşürdü. Ölçülen kusur: TV bir
+     *  bilgisayarla eşleşikken ikinci bilgisayarın kodu ekrana hiç çıkmıyordu. */
+    @Volatile var pairingPending = false
+        private set
+
+    /** Eşleşmiş bilgisayarların adları, TV'nin kendi anahtar tablosundan (§3.3). */
+    fun pairedNames(): List<String> = pairing.peers().map { it.name }
+
+    private fun setPending(pending: Boolean) {
+        if (pairingPending == pending) return
+        pairingPending = pending
+        listener.onPairingPending(pending)
+    }
 
     fun start() {
         if (running.get()) return
@@ -67,6 +89,7 @@ class ControlLink(storageDir: File, private val listener: Listener) {
         writer?.let { try { it.close() } catch (e: Exception) { } }
         outboundWriter?.let { try { it.close() } catch (e: Exception) { } }
         writer = null; client = null; authed = false
+        pairingPending = false
         outboundWriter = null; outboundSocket = null
         acceptThread = null
     }
@@ -225,8 +248,9 @@ class ControlLink(storageDir: File, private val listener: Listener) {
                             Log.w(TAG, "eşleşme tablosu dolu, yeni bilgisayar alınamıyor: $peerName")
                             return false
                         }
+                        setPending(true)
                         displayPin()
-                        // Kullanıcı kodu Mac'e yazarken bağlantı beklesin.
+                        // Kullanıcı kodu bilgisayara yazarken bağlantı beklesin.
                         s.soTimeout = Protocol.PIN_TTL_MS.toInt()
                         reply(Msg.T to Msg.PAIR_REQUIRED, "pin_ttl_ms" to Protocol.PIN_TTL_MS, "ver" to Protocol.VERSION)
                     }
@@ -270,6 +294,7 @@ class ControlLink(storageDir: File, private val listener: Listener) {
                     pairing.endAttempt(key, claim)
                     authed = true
                     authedPeerId = claim?.id
+                    setPending(false)
                     s.soTimeout = 0
                     val sid = PairingCrypto.fingerprint(key)
                     reply(Msg.T to Msg.PAIRED, "session" to sid, "mac" to pairing.b64(tvMac))
@@ -301,7 +326,8 @@ class ControlLink(storageDir: File, private val listener: Listener) {
                     authed = true
                     authedPeerId = peer.id
                     s.soTimeout = 0
-                    pairing.touch(peer.id)
+                    // Kayıt bu bağlantıyla tazelenir: ad da kanıtı doğrulanmış uçtan gelir.
+                    pairing.touch(peer.id, peerName)
                     reply(Msg.T to Msg.READY, "session" to PairingCrypto.fingerprint(peer.key),
                         "proof" to pairing.b64(PairingCrypto.sessionProof(peer.key, "ctl", "tv", n, nonceMac)))
                 }
@@ -379,6 +405,8 @@ class ControlLink(storageDir: File, private val listener: Listener) {
             if (c.exchange != null) c.failAttempt("disconnected")
             try { s.close() } catch (e: Exception) { }
             writer = null; client = null; authed = false
+            // Bekleyiş bu bağlantıya aitti: bağlantı bittiğinde kod ekranı da düşer.
+            setPending(false)
             // Doğrulanmamış bir bağlantının kapanması yayını etkilemez.
             if (wasAuthed) listener.onClientDisconnected()
         }

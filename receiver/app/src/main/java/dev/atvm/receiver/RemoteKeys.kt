@@ -156,7 +156,7 @@ object RemoteKeys {
      * çevrilmemiş ipucu derlemeyi durdurur.
      */
     enum class HintKey { okNewCode, okStart, backExit, backStop, lrSelect, lrSync,
-                         menuDetail, menuStats, searchMac }
+                         menuDetail, menuStats, searchComputer }
 
     /** Bir rehber hücresi: tuş etiketi + fiilin anahtarı. Metin kısa tutulur (kullanıcı isteği).
      *  `key` çevrilmez: kumandanın üstündeki harf, yani veri. */
@@ -180,7 +180,7 @@ object RemoteKeys {
                 add(Hint("OK", HintKey.okStart))
                 add(Hint("◀▶", HintKey.lrSelect))
             } else {
-                add(Hint("SEARCH", HintKey.searchMac))
+                add(Hint("SEARCH", HintKey.searchComputer))
             }
             add(Hint("MENU", HintKey.menuDetail))
             add(Hint("BACK", HintKey.backExit))

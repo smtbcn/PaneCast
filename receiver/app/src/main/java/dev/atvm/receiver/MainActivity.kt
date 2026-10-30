@@ -210,8 +210,13 @@ class MainActivity : Activity(), ControlLink.Listener {
         Log.i(TAG, "PIN ekranda gösteriliyor (değer loglanmaz)")
     }
 
-    override fun onPaired(sessionId: String) {
-        Log.i(TAG, "eşleşme tamam session=$sessionId")
+    /** Kod bekleyen bilgisayarın varışı/ayrılışı ekran kararını değiştirir: çizim ana iş
+     *  parçacığına taşınır (çağrı kontrol bağlantısının iş parçacığından gelir). */
+    override fun onPairingPending(pending: Boolean) {
+        ui.post { renderStatus() }
+    }
+
+    override fun onPaired(sessionId: String) {        Log.i(TAG, "eşleşme tamam session=$sessionId")
         ui.post {
             currentPin = null
             renderStatus()
@@ -433,8 +438,9 @@ class MainActivity : Activity(), ControlLink.Listener {
 
     private val statsRunnable = object : Runnable {
         override fun run() {
-            // PIN sayacı tek yerde tutulur: ekran bunu State üzerinden okur.
-            if (!streaming && !control.isPaired) {
+            // PIN sayacı tek yerde tutulur: ekran bunu State üzerinden okur. Sayaç, kodun
+            // gerçekten çizildiği durumda işlemeli — ikinci bilgisayar eşleşirken de.
+            if (!streaming && (!control.isPaired || control.pairingPending)) {
                 pinLeft = control.pinSecondsLeft()
                 pinLock = control.lockSecondsLeft()
                 if (pinLock == 0 && pinLeft <= 0 && currentPin != null) control.displayPin(force = true)
@@ -533,14 +539,25 @@ class MainActivity : Activity(), ControlLink.Listener {
         )
     }
 
+    /** Ekranda okunan bilgisayar adları: TV'nin anahtar tablosundan. Adsız kayıt (eski tek
+     *  anahtar dosyası) yerelleştirilmiş etiket alır — model katmanı Türkçe sabit taşımaz. */
+    private fun peerLabels(): String =
+        control.pairedNames().joinToString(", ") { n ->
+            n.ifBlank { text(R.string.home_peer_unnamed) }
+        }
+
     private fun renderStatus() {
         if (preview in 1..2) {
             screen.render(previewState(if (preview == 1) RemoteKeys.Screen.READY else RemoteKeys.Screen.STREAMING))
             return
         }
         val local = localIpv4s()
+        val pending = control.pairingPending
         val kind = when {
             streaming -> RemoteKeys.Screen.STREAMING
+            // Kod bekleyen bir bilgisayar varken ekran kodu çizmeli: hazır ekranı seçilince
+            // PIN hiç görünmüyordu ve ikinci bilgisayar eşleşemiyordu (gerçek TV'de ölçüldü).
+            pending -> RemoteKeys.Screen.PAIRING
             control.isPaired -> RemoteKeys.Screen.READY
             else -> RemoteKeys.Screen.PAIRING
         }
@@ -560,18 +577,27 @@ class MainActivity : Activity(), ControlLink.Listener {
             RemoteKeys.Screen.READY -> {
                 headline = text(if (computers.isEmpty()) R.string.home_headline_searching
                                 else R.string.home_headline_ready)
-                subline = if (control.peerName == "-") text(R.string.home_subline_waiting)
-                          else text(R.string.home_subline_paired, control.peerName)
+                // Ad TV'nin kendi anahtar tablosundan gelir; ağdan gelen selamlama etiketi
+                // doğrulanmamış bir iddiadır ve ekrana "eşleşilen" diye yazılamaz (§3.3).
+                val paired = peerLabels()
+                subline = text(R.string.home_subline_paired, paired)
                 if (computers.isEmpty() && note.isEmpty()) note = text(R.string.home_note_rescan_hint)
-                teknik.append(text(R.string.home_detail_session, control.peerName,
+                teknik.append(text(R.string.home_detail_session, paired,
                     Protocol.CONTROL_PORT, Protocol.MEDIA_PORT))
                 teknik.append(text(R.string.home_detail_hold_back))
             }
             RemoteKeys.Screen.PAIRING -> {
                 headline = text(R.string.pair_headline)
                 subline = text(R.string.pair_subline)
+                // Bu ekran ya hiç kayıt yokken ya da kod bekleyen bir bilgisayar varken görünür.
+                // Kayıt varken söylenmesi gereken: yeni kod tabloya EKLER, üzerine yazmaz.
+                val peers = control.pairedNames()
+                if (peers.isNotEmpty() && note.isEmpty()) note =
+                    text(R.string.pair_note_also_paired, peerLabels())
                 if (pinLock > 0) note = text(R.string.pair_note_locked, pinLock)
                 teknik.append(text(R.string.pair_detail_code_valid, pinLeft))
+                if (peers.isNotEmpty()) teknik.append(text(R.string.pair_detail_peers,
+                    peers.size, Pairing.MAX_PEERS))
             }
         }
         teknik.append(text(R.string.common_detail_identity, packageInfoVersion(),
@@ -661,7 +687,9 @@ class MainActivity : Activity(), ControlLink.Listener {
             return super.dispatchKeyEvent(event)
         }
         // Odakta kart varsa SELECT framework'ün tıklamasına ait (çift tetikleme olmasın).
-        if (cmd == RemoteKeys.Command.SELECT && !streaming && control.isPaired && computers.isNotEmpty()) {
+        // Kod ekranında kart yoktur: orada SELECT yeni kod üretsin diye bekleyiş dışlanır.
+        if (cmd == RemoteKeys.Command.SELECT && !streaming && !control.pairingPending &&
+            control.isPaired && computers.isNotEmpty()) {
             return super.dispatchKeyEvent(event)
         }
         // Hata-ayıklama sürümünde tek satır tuş izi: kumanda sorunu "tuş mu gelmiyor,
@@ -694,7 +722,7 @@ class MainActivity : Activity(), ControlLink.Listener {
             RemoteKeys.Command.SEARCH -> rescan(text(R.string.home_note_rescanning))
             RemoteKeys.Command.STOP, RemoteKeys.Command.PLAY_PAUSE ->
                 if (streaming) stopStream("kumanda")
-                else if (!control.isPaired) { control.displayPin(force = true); renderStatus() }
+                else if (control.pairingPending || !control.isPaired) { control.displayPin(force = true); renderStatus() }
             RemoteKeys.Command.NAV_LEFT, RemoteKeys.Command.NAV_RIGHT -> {
                 // Yayında ◀ ▶ senkron kalibrasyonudur (insan kulağı/flaş klibi ile ölçülüyor).
                 val c = avClock

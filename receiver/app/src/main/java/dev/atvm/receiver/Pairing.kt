@@ -2,6 +2,7 @@ package dev.atvm.receiver
 
 import android.util.Log
 import java.io.File
+import java.util.regex.Pattern
 import java.security.SecureRandom
 import java.util.Base64
 
@@ -29,6 +30,9 @@ class Pairing(dir: File, private val clock: () -> Long = System::currentTimeMill
         private const val PEERS_DIR = "pair_keys_v2"
         private const val LEGACY_STEM = "legacy"   // geçerli id olamaz: 16 karakter değil
         private const val LEGACY_FILE = "pair_key_v2.bin"
+
+        /** Ağdan gelen ad meta satırını bozamasın: satır sonu ve kontrol karakterleri. */
+        private val CTRL_CHARS: Pattern = Pattern.compile("[\\r\\n\\t\\x00-\\x1F\\x7F]")
     }
 
     /** Bir bilgisayarın eşleşme kaydı. `id` null = eski yayıncı, kimlik göndermiyor. */
@@ -95,7 +99,9 @@ class Pairing(dir: File, private val clock: () -> Long = System::currentTimeMill
         val key = runCatching { bin.readBytes() }.getOrNull() ?: return null
         val meta = runCatching { metaOf(stem).readText().trim() }.getOrDefault("")
         val seen = meta.substringBefore(' ').toLongOrNull() ?: bin.lastModified()
-        val name = meta.substringAfter(' ', "").ifBlank { "bilgisayar" }
+        // Ad boş kalabilir (eski tek anahtar dosyası ad taşımıyordu): görünen etiketi
+        // arayüz yerelleştirir, model Türkçe sabit taşımaz.
+        val name = meta.substringAfter(' ', "").trim()
         return Peer(safeId(stem), key, name, seen)
     }
 
@@ -128,12 +134,15 @@ class Pairing(dir: File, private val clock: () -> Long = System::currentTimeMill
 
     fun sessionKeys(claim: Claim? = null): List<ByteArray> = sessionPeers(claim).map { it.key }
 
-    /** Doğrulanmış oturumdan sonra çağrılır: düşürme sırası "en az kullanılan" kalsın. */
+    /** Doğrulanmış oturumdan sonra çağrılır: düşürme sırası "en az kullanılan" kalsın ve
+     *  bilgisayarın kendi adı kayda geçsin. Ad yalnız oturum kanıtı doğrulanmış uçtan gelir —
+     *  ağdaki herhangi bir selamlama etiketi buraya yazılamaz (§3.3). Eski tek anahtar kaydı
+     *  adsız taşındığı için ekranda "bilgisayar" yazıyordu; ilk doğrulanmış bağlantıda dolar. */
     @Synchronized
-    fun touch(id: String?) {
-        val stem = safeId(id) ?: return
+    fun touch(id: String?, name: String? = null) {
+        val stem = safeId(id) ?: LEGACY_STEM
         val peer = readPeer(stem) ?: return
-        writeMeta(stem, peer.name)
+        writeMeta(stem, name?.takeIf { it.isNotBlank() } ?: peer.name)
     }
 
     /** Bir kaydı siler. `id` null = kimlik göndermeyen eski yayıncının kaydı; **hepsi** değil.
@@ -155,8 +164,11 @@ class Pairing(dir: File, private val clock: () -> Long = System::currentTimeMill
         Log.i(TAG, "tüm eşleşme kayıtları silindi")
     }
 
+    /** Meta TEK satırdır: "zaman adı". Ağdan gelen ad satır sonu/kontrol karakteri
+     *  taşıyabilir ve ekranda çok satırlı bir etiket olarak belirirdi → temizlenir. */
     private fun writeMeta(stem: String, name: String) {
-        runCatching { metaOf(stem).writeText("${clock()} ${name.take(64)}") }
+        val clean = CTRL_CHARS.matcher(name).replaceAll(" ").trim().take(64)
+        runCatching { metaOf(stem).writeText("${clock()} $clean") }
     }
 
     @Synchronized
@@ -176,7 +188,7 @@ class Pairing(dir: File, private val clock: () -> Long = System::currentTimeMill
         runCatching {
             tmp.writeBytes(key)
             if (!tmp.renameTo(binOf(stem))) { binOf(stem).writeBytes(key); tmp.delete() }
-            writeMeta(stem, claim?.name?.takeIf { it.isNotBlank() } ?: "bilgisayar")
+            writeMeta(stem, claim?.name.orEmpty())
         }.onFailure { Log.e(TAG, "eşleşme anahtarı kaydedilemedi: ${it.message}") }
     }
 

@@ -11,20 +11,22 @@
     <!-- === eşleşme ekranı (PIN) === -->
     <string name="pair_chip">WAITING FOR PAIRING</string>
     <string name="pair_headline">Waiting for pairing</string>
-    <string name="pair_subline">enter this code in the Pane Cast window on the Mac</string>
-    <string name="pair_pin_label">Enter this code in the Pane Cast window on your Mac</string>
+    <string name="pair_subline">enter this code in the Pane Cast window on the computer</string>
+    <string name="pair_pin_label">Enter this code in the Pane Cast window on your computer</string>
     <string name="pair_pin_timer">"this code is valid for %1$d s · OK: new code"</string>
     <string name="pair_pin_timer_expired">"the code has expired · OK: new code"</string>
+    <string name="pair_note_also_paired">"already paired with: %1$s — this code adds another computer"</string>
     <string name="pair_note_locked">"Too many incorrect attempts · retry in %1$d s"</string>
     <string name="pair_detail_code_valid">"code valid for %1$d s · OK: new code\n"</string>
+    <string name="pair_detail_peers">"paired computers: %1$d/%2$d\n"</string>
 
     <!-- === hazır ekranı (bilgisayar listesi) === -->
     <string name="home_chip">READY</string>
     <string name="home_headline_ready">Ready to broadcast</string>
-    <string name="home_headline_searching">Searching for a Mac</string>
-    <string name="home_subline_waiting">"pairing saved · waiting for the connection"</string>
+    <string name="home_headline_searching">Searching for computers</string>
     <string name="home_subline_paired">"paired with: %1$s"</string>
-    <string name="home_note_rescan_hint">"SEARCH scans again · if you pick this TV on the Mac, the stream starts from there too"</string>
+    <string name="home_peer_unnamed">unnamed computer</string>
+    <string name="home_note_rescan_hint">"SEARCH scans again · if you pick this TV on the computer, the stream starts from there too"</string>
     <string name="home_note_ok_calls_selected">OK calls the computer you selected</string>
     <string name="home_note_list_empty">"list is empty — searching again"</string>
     <string name="home_note_rescanning">scanning again…</string>
@@ -35,7 +37,7 @@
     <string name="home_detail_session">"pairing: %1$s  ·  control tcp/%2$d  media udp/%3$d\n"</string>
     <string name="home_detail_hold_back">"HOLD BACK: forget the pairing (asks for confirmation)\n"</string>
     <string name="home_unpair_title">Forget this pairing?</string>
-    <string name="home_unpair_message">The pairing between this TV and the Mac is removed. To broadcast again, enter the code on the TV screen into the Mac again.</string>
+    <string name="home_unpair_message">Every paired computer is forgotten. To broadcast again, enter the code on the TV screen into the computer.</string>
     <string name="home_unpair_confirm">Forget</string>
     <string name="home_unpair_cancel">Cancel</string>
 
@@ -63,21 +65,21 @@
     <string name="hint_lr_sync">sync</string>
     <string name="hint_menu_detail">details</string>
     <string name="hint_menu_stats">metrics</string>
-    <string name="hint_search_mac">find a Mac</string>
+    <string name="hint_search_computer">find a computer</string>
 
-    <!-- === Mac'in red gerekçeleri === -->
-    <string name="deny_no_window">"No window is selected on the Mac for broadcasting — pick one in the Mac app, then OK"</string>
-    <string name="deny_not_paired">"The Mac does not see this TV as paired — enter the TV's code into the Mac again"</string>
-    <string name="deny_auth_failed">"The Mac could not verify the pairing key — forget the pairing and pair again"</string>
+    <!-- === bilgisayarın red gerekçeleri === -->
+    <string name="deny_no_window">"No window is selected on the computer for broadcasting — pick one in the computer app, then OK"</string>
+    <string name="deny_not_paired">"The computer does not see this TV as paired — enter the TV's code into the computer again"</string>
+    <string name="deny_auth_failed">"The computer could not verify the pairing key — forget the pairing and pair again"</string>
     <string name="deny_already_paired">"This computer is already paired with this TV — to pair it again, delete the pairing on the TV first"</string>
     <string name="deny_no_slot">"This TV already remembers the maximum number of computers — delete one on the TV, then pair again"</string>
     <string name="deny_code_expired">"The code has expired — press OK for a new code"</string>
     <string name="deny_locked">"Too many incorrect attempts — wait a moment and try again"</string>
-    <string name="deny_version">"The Mac and the TV versions do not match — update both sides"</string>
-    <string name="deny_protocol">"The Mac received an unexpected reply — try broadcasting again"</string>
-    <string name="deny_generic">The Mac refused the request</string>
-    <!-- Bilinmeyen gerekçe uydurulmaz: Mac'in yazdığı anahtar aynen basılır. -->
-    <string name="deny_unknown">"The Mac refused: %1$s"</string>
+    <string name="deny_version">"The computer and the TV versions do not match — update both sides"</string>
+    <string name="deny_protocol">"The computer received an unexpected reply — try broadcasting again"</string>
+    <string name="deny_generic">The computer refused the request</string>
+    <!-- Bilinmeyen gerekçe uydurulmaz: bilgisayarın yazdığı anahtar aynen basılır. -->
+    <string name="deny_unknown">"The computer refused: %1$s"</string>
 
     <!-- === yalnız hata-ayıklama ön izlemesi (preview bayrağı) === -->
     <string name="preview_version_label">preview</string>
@@ -91,7 +93,7 @@
     <string name="cast_fail_proto">The app on the computer uses a different protocol version — update it</string>
     <string name="cast_fail_old_app">The app on the computer is too old — update it</string>
     <string name="cast_fail_bad_challenge">Malformed challenge from the computer</string>
-    <string name="cast_fail_identity">The computer\'s identity could not be verified (not the paired Mac)</string>
+    <string name="cast_fail_identity">The computer\'s identity could not be verified (not a paired computer)</string>
     <string name="cast_fail_denied">The computer refused: %1$s</string>
     <string name="cast_fail_unexpected">Unexpected reply from the computer: %1$s</string>
     <string name="cast_fail_network">Could not reach the computer: %1$s</string>

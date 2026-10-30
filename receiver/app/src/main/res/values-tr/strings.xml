@@ -8,20 +8,22 @@
     <!-- === eşleşme ekranı (PIN) === -->
     <string name="pair_chip">EŞLEŞME BEKLENİYOR</string>
     <string name="pair_headline">Eşleşme bekleniyor</string>
-    <string name="pair_subline">"bu kodu Mac'teki Pane Cast penceresine gir"</string>
-    <string name="pair_pin_label">"Bu kodu Mac'teki Pane Cast penceresine girin"</string>
+    <string name="pair_subline">"bu kodu bilgisayardaki Pane Cast penceresine gir"</string>
+    <string name="pair_pin_label">"Bu kodu bilgisayardaki Pane Cast penceresine girin"</string>
     <string name="pair_pin_timer">"bu kod %1$d sn geçerli · OK: yeni kod"</string>
     <string name="pair_pin_timer_expired">"kodun süresi doldu · OK: yeni kod"</string>
+    <string name="pair_note_also_paired">"zaten eşleşilen: %1$s — bu kod yeni bir bilgisayar ekler"</string>
     <string name="pair_note_locked">"Çok fazla hatalı deneme · %1$d sn sonra yeniden"</string>
     <string name="pair_detail_code_valid">"kod %1$d sn geçerli · OK: yeni kod\n"</string>
+    <string name="pair_detail_peers">"eşleşmiş bilgisayar: %1$d/%2$d\n"</string>
 
     <!-- === hazır ekranı (bilgisayar listesi) === -->
     <string name="home_chip">HAZIR</string>
     <string name="home_headline_ready">Yayına hazır</string>
-    <string name="home_headline_searching">Mac aranıyor</string>
-    <string name="home_subline_waiting">"eşleşme kayıtlı · bağlantı bekleniyor"</string>
+    <string name="home_headline_searching">Bilgisayar aranıyor</string>
     <string name="home_subline_paired">"eşleşilen: %1$s"</string>
-    <string name="home_note_rescan_hint">"SEARCH ile yeniden ara · Mac'te bu TV'yi seçersen akış oradan da başlar"</string>
+    <string name="home_peer_unnamed">adsız bilgisayar</string>
+    <string name="home_note_rescan_hint">"SEARCH ile yeniden ara · bilgisayarda bu TV'yi seçersen akış oradan da başlar"</string>
     <string name="home_note_ok_calls_selected">"OK seçtiğin bilgisayarı çağırır"</string>
     <string name="home_note_list_empty">"liste boş — yeniden aranıyor"</string>
     <string name="home_note_rescanning">yeniden taranıyor…</string>
@@ -32,7 +34,7 @@
     <string name="home_detail_session">"eşleşme: %1$s  ·  kontrol tcp/%2$d  medya udp/%3$d\n"</string>
     <string name="home_detail_hold_back">"BACK tuşuna BASILI TUT: eşleşmeyi sil (onay sorulur)\n"</string>
     <string name="home_unpair_title">Eşleşme silinsin mi?</string>
-    <string name="home_unpair_message">"Bu TV ile Mac arasındaki eşleşme kaldırılır. Yayına devam etmek için TV ekranındaki kodu Mac'e yeniden girmen gerekir."</string>
+    <string name="home_unpair_message">"Eşleşmiş tüm bilgisayarlar unutulur. Yayına devam etmek için TV ekranındaki kodu bilgisayara yeniden girmen gerekir."</string>
     <string name="home_unpair_confirm">Sil</string>
     <string name="home_unpair_cancel">Vazgeç</string>
 
@@ -60,21 +62,21 @@
     <string name="hint_lr_sync">senkron</string>
     <string name="hint_menu_detail">ayrıntı</string>
     <string name="hint_menu_stats">ölçüm</string>
-    <string name="hint_search_mac">"Mac ara"</string>
+    <string name="hint_search_computer">"Bilgisayar ara"</string>
 
-    <!-- === Mac'in red gerekçeleri === -->
-    <string name="deny_no_window">"Mac'te yayınlanacak pencere seçili değil — Mac arayüzünden bir pencere seç, sonra OK"</string>
-    <string name="deny_not_paired">"Mac bu TV ile eşleşmiş saymıyor — TV'deki kodu Mac'e yeniden girin"</string>
-    <string name="deny_auth_failed">Mac eşleşme anahtarını doğrulayamadı — eşleştirmeyi silip yeniden eşleşin</string>
+    <!-- === bilgisayarın red gerekçeleri === -->
+    <string name="deny_no_window">"Bilgisayarda yayınlanacak pencere seçili değil — bilgisayarın arayüzünden bir pencere seç, sonra OK"</string>
+    <string name="deny_not_paired">"Bilgisayar bu TV ile eşleşmiş saymıyor — TV'deki kodu bilgisayara yeniden girin"</string>
+    <string name="deny_auth_failed">Bilgisayar eşleşme anahtarını doğrulayamadı — eşleştirmeyi silip yeniden eşleşin</string>
     <string name="deny_already_paired">Bu bilgisayar bu TV ile zaten eşleşmiş — yeniden eşleşmek için önce TV\'den eşleştirmeyi silin</string>
     <string name="deny_no_slot">Bu TV en fazla sayıda bilgisayarı hatırlıyor — TV\'den birini silin, sonra yeniden eşleşin</string>
     <string name="deny_code_expired">Kodun süresi doldu — OK ile yeni kod alın</string>
     <string name="deny_locked">Çok fazla hatalı deneme — biraz bekleyip yeniden deneyin</string>
-    <string name="deny_version">Mac ile sürümler uyumsuz — iki tarafı da güncelleyin</string>
-    <string name="deny_protocol">Mac beklenmeyen bir yanıt aldı — yayını yeniden deneyin</string>
-    <string name="deny_generic">Mac isteği reddetti</string>
-    <!-- Bilinmeyen gerekçe uydurulmaz: Mac'in yazdığı anahtar aynen basılır. -->
-    <string name="deny_unknown">"Mac reddetti: %1$s"</string>
+    <string name="deny_version">Bilgisayar ile sürümler uyumsuz — iki tarafı da güncelleyin</string>
+    <string name="deny_protocol">Bilgisayar beklenmeyen bir yanıt aldı — yayını yeniden deneyin</string>
+    <string name="deny_generic">Bilgisayar isteği reddetti</string>
+    <!-- Bilinmeyen gerekçe uydurulmaz: bilgisayarın yazdığı anahtar aynen basılır. -->
+    <string name="deny_unknown">"Bilgisayar reddetti: %1$s"</string>
 
     <!-- === yalnız hata-ayıklama ön izlemesi (preview bayrağı) === -->
     <string name="preview_version_label">"ön izleme"</string>
@@ -85,7 +87,7 @@
     <string name="cast_fail_proto">bilgisayardaki uygulama farklı protokol sürümünde — güncelleyin</string>
     <string name="cast_fail_old_app">bilgisayardaki uygulama eski sürüm — güncelleyin</string>
     <string name="cast_fail_bad_challenge">Bilgisayardan bozuk challenge geldi</string>
-    <string name="cast_fail_identity">bilgisayarın kimliği doğrulanamadı (eşleşmiş Mac değil)</string>
+    <string name="cast_fail_identity">bilgisayarın kimliği doğrulanamadı (eşleşmiş bir bilgisayar değil)</string>
     <string name="cast_fail_denied">bilgisayar reddetti: %1$s</string>
     <string name="cast_fail_unexpected">Bilgisayardan beklenmeyen yanıt: %1$s</string>
     <string name="cast_fail_network">Bilgisayara ulaşılamadı: %1$s</string>
