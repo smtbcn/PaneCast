@@ -7,8 +7,11 @@
 //   probe <ip> [sn] aynı gövdeyi tek adrese gönderir — yayın yolunu tek adres yolundan ayırır
 //   reg [sn]       `_atvm-sender._tcp` kaydını yayımlar, süre boyunca elde tutar (TV listesi)
 //   regtest        örnek kurmanın varyantlarını dolaşır, her birinde GetLastError basar
+//   serve [sn]     TCP 7610 dinleyici + mDNS kayıt birlikte: TV seçerse hello→proof→ready→
+//                  resume zincirini burada ölçer (yayın motoru hâlihazırda bağlı yok)
 //
 // Etiketler ASCII, değerler UTF-8: konsol kod sayfası burada UTF-8'e çekiliyor.
+#include "../src/SenderServer.h"   // önce gelir: winsock2 → windows sırası burada korunur
 #include "../src/Discover.h"
 #include "../src/Host.h"
 #include "../src/KeyStore.h"
@@ -135,7 +138,7 @@ int main(int argc, char** argv) {
     SetConsoleOutputCP(CP_UTF8);
     setvbuf(stdout, nullptr, _IONBF, 0);      // uzak kabukta satır beklemesin: kayıt anı görünsün
     if (argc < 2) {
-        printf("usage: winCore <id|keys|presence|probe|reg|regtest> [args]\n");
+        printf("usage: winCore <id|keys|presence|probe|reg|regtest|serve> [args]\n");
         return 2;
     }
     const std::string cmd = argv[1];
@@ -193,6 +196,28 @@ int main(int argc, char** argv) {
         Sleep(static_cast<DWORD>(secs * 1000));
         reg.Stop();
         printf("STOPPED=1 active=%d\n", reg.active() ? 1 : 0);
+        return 0;
+    }
+
+    if (cmd == "serve") {
+        const double secs = argc > 2 ? atof(argv[2]) : 20.0;
+        SenderServer srv;
+        srv.onLog = [](const std::string& s) { printf("LOG %s\n", s.c_str()); };
+        srv.onResume = [](const std::shared_ptr<TvSession>& s) {
+            printf("RESUME tv=%s(%s) media=%s:%u\n", s->name().c_str(), s->host().c_str(),
+                   s->mediaHost().c_str(), s->mediaPort());
+        };
+        srv.onIdrRequest = [](const std::string& h) { printf("IDR host=%s\n", h.c_str()); };
+        srv.onTvStop = [](const std::string& h) { printf("TV_STOP host=%s\n", h.c_str()); };
+        const bool ok = srv.Start(7610, true);
+        printf("LISTEN=%d PORT=%u ADVERTISED=%d ERROR=%s\n",
+               srv.listening() ? 1 : 0, srv.port(), srv.advertised() ? 1 : 0,
+               srv.lastError().empty() ? "-" : srv.lastError().c_str());
+        if (!ok) return 1;
+        printf("HOLDING=%.0fs\n", secs);
+        Sleep(static_cast<DWORD>(secs * 1000));
+        srv.Stop();
+        printf("STOPPED listening=%d\n", srv.listening() ? 1 : 0);
         return 0;
     }
 
