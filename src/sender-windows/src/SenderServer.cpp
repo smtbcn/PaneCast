@@ -219,16 +219,24 @@ bool TvSession::Route(const FlatJson& m) {
             const Bytes nonceTv = B64Decode(m.str("nonce_tv"));
             const Bytes got = B64Decode(m.str("proof"));
             Bytes key;
-            const bool ok = FetchKey(owner_, host_, key) &&
-                            nonceTv.size() == PairingConst::kNonceBytes &&
-                            ConstantTimeEqual(got, SessionProof(key, Channel::Reverse, Role::Tv,
-                                                                nonce_, nonceTv));
+            const bool keyOk = FetchKey(owner_, host_, key);
+            const Bytes expect = keyOk ? SessionProof(key, Channel::Reverse, Role::Tv, nonce_, nonceTv)
+                                       : Bytes{};
+            const bool ok = keyOk && nonceTv.size() == PairingConst::kNonceBytes &&
+                            ConstantTimeEqual(got, expect);
             if (!ok) {
+                owner_->Log("TV kanıtı doğrulanamadı: " + name_ + " (" + host_ +
+                            ") keyOk=" + std::to_string(keyOk ? 1 : 0) +
+                            " keyLen=" + std::to_string(keyOk ? static_cast<int>(key.size()) : 0) +
+                            " nonceMac=" + B64Encode(nonce_) +
+                            " nonceTv=" + B64Encode(nonceTv) +
+                            " gotLen=" + std::to_string(got.size()) +
+                            " want=" + B64Encode(expect.size() > 32 ? Bytes() : expect) +
+                            " got=" + B64Encode(got.size() > 32 ? Bytes() : got));
                 JsonObject d;
                 d.set("t", std::string("denied"));
                 d.set("reason", std::string("auth_failed"));
                 Send(d);
-                owner_->Log("TV kanıtı doğrulanamadı: " + name_ + " (" + host_ + ")");
                 state_ = State::Idle;
                 CloseSocket();
                 return true;
